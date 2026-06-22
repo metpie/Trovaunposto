@@ -45,6 +45,11 @@ logging.basicConfig(
 )
 log = logging.getLogger("trovaunposto")
 
+# Evita che il token del bot finisca nei log: le librerie HTTP, a livello INFO,
+# stamperebbero l'URL completo delle chiamate a Telegram (token incluso).
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 # ---------------------------------------------------------------------------
 # Configurazione
 # ---------------------------------------------------------------------------
