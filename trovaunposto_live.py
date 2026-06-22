@@ -471,6 +471,36 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def _delete_later(context: ContextTypes.DEFAULT_TYPE):
+    d = context.job.data
+    try:
+        await context.bot.delete_message(chat_id=d["chat_id"], message_id=d["message_id"])
+    except Exception:
+        pass
+
+
+async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        return
+    chat_id = update.effective_chat.id
+    last_id = update.message.message_id
+    deleted = 0
+    # Telegram consente ai bot di cancellare i messaggi di una chat privata
+    # inviati negli ultimi 2 giorni: proviamo a rimuovere quelli recenti.
+    for mid in range(last_id, max(last_id - 100, 0), -1):
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=mid)
+            deleted += 1
+        except Exception:
+            pass
+    msg = await context.bot.send_message(
+        chat_id=chat_id, text=f"🧹 Pulizia completata ({deleted} messaggi recenti rimossi)."
+    )
+    context.job_queue.run_once(
+        _delete_later, 6, data={"chat_id": chat_id, "message_id": msg.message_id}
+    )
+
+
 # ---------------------------------------------------------------------------
 # Callback dei pulsanti del menu (fuori dal wizard)
 # ---------------------------------------------------------------------------
@@ -852,6 +882,7 @@ def build_application():
     app.add_handler(CommandHandler("pausa", cmd_pause))
     app.add_handler(CommandHandler(["riprendi", "riattiva"], cmd_resume))
     app.add_handler(CommandHandler("stato", cmd_status))
+    app.add_handler(CommandHandler(["pulisci", "clear"], cmd_clear))
     app.add_handler(CallbackQueryHandler(on_menu, pattern=r"^(list|pause|resume|del:\d+|avail:\d+)$"))
 
     app.job_queue.run_repeating(check_job, interval=CHECK_INTERVAL, first=10)

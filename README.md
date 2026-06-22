@@ -46,6 +46,7 @@ indicata da `DATA_DIR` (su Railway è un disco persistente montato su `/data`).
 - **📋 Le mie ricerche** (o `/lista`): vedi e rimuovi le ricerche.
 - **⏸️ Pausa / ▶️ Riprendi** (o `/pausa`, `/riprendi`): ferma/riattiva gli avvisi.
 - `/stato`: stato e numero di ricerche.
+- `/pulisci` (o `/clear`): cancella i messaggi recenti della chat (limite Telegram: ultimi 2 giorni).
 - `/aiuto`: menù principale.
 
 Al primo avvio (e quando aggiungi una ricerca) il bot registra i biglietti
