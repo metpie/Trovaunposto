@@ -747,30 +747,38 @@ async def wiz_time_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ASK_PRICE
 
 
+# Con 'qualsiasi giorno' mostriamo i biglietti da oggi fino a +N giorni.
+ANY_DAY_HORIZON = 3
+
+
 def search_urls_for(search):
-    """URL da interrogare per una ricerca. Con una data specifica: una sola URL.
-    Con 'qualsiasi giorno' (match_date vuoto): più finestre da ~7 giorni per
-    coprire le prossime settimane, perché il parametro date vuoto non restituisce
-    risultati affidabili dal server."""
+    """URL da interrogare. Con una data specifica: quella. Con 'qualsiasi giorno'
+    (match_date vuoto): una finestra centrata su oggi (copre i prossimi giorni),
+    perché il parametro date vuoto non restituisce risultati affidabili dal server."""
     base_url = build_search_url(search)
     if search.get("match_date"):
         return [base_url]
-    today = dt.datetime.now(TZ).date()
-    urls = []
-    for off in (3, 10, 17, 24):
-        d = (today + dt.timedelta(days=off)).isoformat()
-        if re.search(r"[?&]date=", base_url):
-            u = re.sub(r"(date=)[^&]*", r"\g<1>" + d, base_url)
-        else:
-            sep = "&" if "?" in base_url else "?"
-            u = f"{base_url}{sep}date={d}"
-        urls.append(u)
-    return urls
+    d = dt.datetime.now(TZ).date().isoformat()
+    if re.search(r"[?&]date=", base_url):
+        return [re.sub(r"(date=)[^&]*", r"\g<1>" + d, base_url)]
+    sep = "&" if "?" in base_url else "?"
+    return [f"{base_url}{sep}date={d}"]
+
+
+def _within_days(date_str, today, days):
+    """True se date_str (gg/mm/aaaa) è tra oggi e oggi+days (inclusi)."""
+    if not date_str:
+        return True
+    try:
+        d = dt.datetime.strptime(date_str, "%d/%m/%Y").date()
+    except Exception:
+        return True
+    return today <= d <= today + dt.timedelta(days=days)
 
 
 def find_matches(search):
-    """Scarica i biglietti corrispondenti (gestendo 'qualsiasi giorno' su più
-    finestre di date) e li ritorna ordinati, senza duplicati."""
+    """Scarica i biglietti corrispondenti e li ritorna ordinati, senza duplicati.
+    Per 'qualsiasi giorno' limita ai prossimi giorni (oggi + ANY_DAY_HORIZON)."""
     import time as _t
     cards_by_id = {}
     urls = search_urls_for(search)
@@ -782,11 +790,16 @@ def find_matches(search):
             continue
         if i + 1 < len(urls):
             _t.sleep(0.4)
+    any_day = not search.get("match_date")
+    today = dt.datetime.now(TZ).date()
     out = []
     for c in cards_by_id.values():
         m = ticket_matches(c, search)
-        if m:
-            out.append((c, m))
+        if not m:
+            continue
+        if any_day and not _within_days(m.get("date"), today, ANY_DAY_HORIZON):
+            continue
+        out.append((c, m))
     out.sort(key=lambda cm: (cm[1].get("date") or "", cm[1].get("dep_time") or ""))
     return out
 
@@ -797,7 +810,7 @@ def render_matches(search, matches):
         return (f"🔎 <b>{esc(search.get('name'))}</b>\n"
                 "Al momento non c'è nessun biglietto che rispetta i criteri.")
     lines = [f"🔎 <b>{esc(search.get('name'))}</b> — {len(matches)} disponibili ora:"]
-    for i, (card, m) in enumerate(matches[:10], 1):
+    for i, (card, m) in enumerate(matches[:15], 1):
         date = f"📅 {esc(m['date'])} " if m.get("date") else ""
         tempo = f"🕒 {esc(m.get('dep_time',''))}→{esc(m.get('arr_time',''))}"
         prezzo = ""
@@ -808,8 +821,8 @@ def render_matches(search, matches):
         if card.get("link"):
             riga += f" — <a href=\"{esc(card['link'])}\">apri</a>"
         lines.append(riga)
-    if len(matches) > 10:
-        lines.append(f"…e altri {len(matches) - 10}.")
+    if len(matches) > 15:
+        lines.append(f"…e altri {len(matches) - 15}.")
     return "\n".join(lines)
 
 
