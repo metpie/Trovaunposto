@@ -747,10 +747,43 @@ async def wiz_time_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ASK_PRICE
 
 
+def search_urls_for(search):
+    """URL da interrogare per una ricerca. Con una data specifica: una sola URL.
+    Con 'qualsiasi giorno' (match_date vuoto): più finestre da ~7 giorni per
+    coprire le prossime settimane, perché il parametro date vuoto non restituisce
+    risultati affidabili dal server."""
+    base_url = build_search_url(search)
+    if search.get("match_date"):
+        return [base_url]
+    today = dt.datetime.now(TZ).date()
+    urls = []
+    for off in (3, 10, 17, 24):
+        d = (today + dt.timedelta(days=off)).isoformat()
+        if re.search(r"[?&]date=", base_url):
+            u = re.sub(r"(date=)[^&]*", r"\g<1>" + d, base_url)
+        else:
+            sep = "&" if "?" in base_url else "?"
+            u = f"{base_url}{sep}date={d}"
+        urls.append(u)
+    return urls
+
+
 def find_matches(search):
-    """Scarica e ritorna i biglietti che corrispondono alla ricerca, ordinati."""
+    """Scarica i biglietti corrispondenti (gestendo 'qualsiasi giorno' su più
+    finestre di date) e li ritorna ordinati, senza duplicati."""
+    import time as _t
+    cards_by_id = {}
+    urls = search_urls_for(search)
+    for i, url in enumerate(urls):
+        try:
+            for c in parse_page(fetch(url)):
+                cards_by_id[c["id"]] = c
+        except Exception:
+            continue
+        if i + 1 < len(urls):
+            _t.sleep(0.4)
     out = []
-    for c in parse_page(fetch(build_search_url(search))):
+    for c in cards_by_id.values():
         m = ticket_matches(c, search)
         if m:
             out.append((c, m))
@@ -863,13 +896,12 @@ async def check_job(context: ContextTypes.DEFAULT_TYPE):
     changed = False
     for search in list(store["searches"]):
         try:
-            cards = await asyncio.to_thread(lambda s=search: parse_page(fetch(build_search_url(s))))
+            matches = await asyncio.to_thread(lambda s=search: find_matches(s))
         except Exception as e:  # noqa: BLE001
             log.warning("controllo fallito per %s: %s", search.get("name"), e)
             continue
-        for card in cards:
-            m = ticket_matches(card, search)
-            if not m or card["id"] in seen:
+        for card, m in matches:
+            if card["id"] in seen:
                 continue
             seen[card["id"]] = now
             changed = True
@@ -893,12 +925,11 @@ async def on_startup(app: Application):
         now = dt.datetime.utcnow().timestamp()
         for search in app.bot_data["store"]["searches"]:
             try:
-                cards = await asyncio.to_thread(lambda s=search: parse_page(fetch(build_search_url(s))))
+                matches = await asyncio.to_thread(lambda s=search: find_matches(s))
             except Exception:
                 continue
-            for c in cards:
-                if ticket_matches(c, search):
-                    seen[c["id"]] = now
+            for c, _m in matches:
+                seen[c["id"]] = now
         app.bot_data["seen"] = save_seen(seen)
     log.info("Avviato. Ricerche: %d, intervallo %ds.",
              len(app.bot_data["store"]["searches"]), CHECK_INTERVAL)
