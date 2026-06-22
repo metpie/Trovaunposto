@@ -56,6 +56,9 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 OWNER = os.environ.get("TELEGRAM_CHAT_ID", "")
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "60"))
+# Auto-rallentamento quando il sito è in difficoltà
+FAIL_THRESHOLD = 3      # cicli consecutivi tutti falliti prima di rallentare
+SLOW_SECONDS = 600      # pausa tra i tentativi quando il sito non risponde (10 min)
 DATA_DIR = os.environ.get("DATA_DIR", "./data")
 SEARCHES_PATH = os.path.join(DATA_DIR, "searches.json")
 SEEN_PATH = os.path.join(DATA_DIR, "seen.json")
@@ -781,15 +784,19 @@ def find_matches(search):
     Per 'qualsiasi giorno' limita ai prossimi giorni (oggi + ANY_DAY_HORIZON)."""
     import time as _t
     cards_by_id = {}
+    ok = False
     urls = search_urls_for(search)
     for i, url in enumerate(urls):
         try:
             for c in parse_page(fetch(url)):
                 cards_by_id[c["id"]] = c
+            ok = True
         except Exception:
-            continue
+            pass
         if i + 1 < len(urls):
             _t.sleep(0.4)
+    if not ok:
+        raise RuntimeError("sito irraggiungibile (fetch fallito)")
     any_day = not search.get("match_date")
     today = dt.datetime.now(TZ).date()
     out = []
@@ -904,13 +911,19 @@ async def check_job(context: ContextTypes.DEFAULT_TYPE):
     store = app.bot_data["store"]
     if store.get("paused") or not store.get("searches"):
         return
-    seen = app.bot_data["seen"]
     now = dt.datetime.utcnow().timestamp()
+    # Auto-rallentamento: se il sito è in difficoltà, salta i controlli finché non scade.
+    if now < app.bot_data.get("backoff_until", 0):
+        return
+    seen = app.bot_data["seen"]
     changed = False
+    attempted = failures = 0
     for search in list(store["searches"]):
+        attempted += 1
         try:
             matches = await asyncio.to_thread(lambda s=search: find_matches(s))
         except Exception as e:  # noqa: BLE001
+            failures += 1
             log.warning("controllo fallito per %s: %s", search.get("name"), e)
             continue
         for card, m in matches:
@@ -926,6 +939,33 @@ async def check_job(context: ContextTypes.DEFAULT_TYPE):
                 log.warning("invio notifica fallito: %s", e)
     if changed:
         app.bot_data["seen"] = save_seen(seen)
+
+    # Stato del sito: se TUTTE le richieste falliscono = probabile blocco/irraggiungibile.
+    if attempted and failures == attempted:
+        app.bot_data["fail_streak"] = app.bot_data.get("fail_streak", 0) + 1
+        if app.bot_data["fail_streak"] >= FAIL_THRESHOLD:
+            app.bot_data["backoff_until"] = now + SLOW_SECONDS
+            if not app.bot_data.get("slowed"):
+                app.bot_data["slowed"] = True
+                try:
+                    await context.bot.send_message(
+                        chat_id=OWNER,
+                        text="⚠️ Il sito non risponde da qualche minuto: ho <b>rallentato</b> i "
+                             "controlli per non sovraccaricarlo. Ti avviso appena torna disponibile.",
+                        parse_mode=ParseMode.HTML)
+                except Exception:  # noqa: BLE001
+                    pass
+    else:
+        if app.bot_data.get("slowed"):
+            app.bot_data["slowed"] = False
+            try:
+                await context.bot.send_message(
+                    chat_id=OWNER,
+                    text="✅ Il sito risponde di nuovo: controlli ripristinati alla frequenza normale.")
+            except Exception:  # noqa: BLE001
+                pass
+        app.bot_data["fail_streak"] = 0
+        app.bot_data["backoff_until"] = 0
 
 
 async def on_startup(app: Application):
