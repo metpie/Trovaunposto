@@ -502,6 +502,37 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Diagnostica temporanea: prova Milano→Roma dal server e riporta cosa riceve."""
+    if not is_owner(update):
+        return
+    url = ("https://trovaunposto.it/trains/searchTrainTicket?"
+           "departure=MILANO%28TUTTE+LE+STAZIONI%29&departure_id=MILANO%28TUTTE+LE+STAZIONI%29&"
+           "arrival=ROMA%28TUTTE+LE+STAZIONI%29&arrival_id=ROMA%28TUTTE+LE+STAZIONI%29&date=")
+    await update.effective_message.reply_text("🔧 Test Milano→Roma dal server in corso…")
+    try:
+        html = await asyncio.to_thread(lambda: fetch(url))
+    except Exception as e:  # noqa: BLE001
+        await update.effective_message.reply_text(f"🔧 fetch ERRORE: {type(e).__name__}: {e}")
+        return
+    raw = html.count("buyTrainTicket")
+    cards = parse_page(html)
+    s = {"match_departure_contains": "MILANO", "match_arrival_contains": "ROMA"}
+    matches = sum(1 for c in cards if ticket_matches(c, s))
+    low = html.lower()
+    flags = [k for k in ("just a moment", "cloudflare", "captcha", "enable javascript",
+                         "access denied", "forbidden", "attiva javascript") if k in low]
+    await update.effective_message.reply_text(
+        "🔧 <b>DEBUG Milano→Roma</b>\n"
+        f"HTML ricevuto: {len(html)} caratteri\n"
+        f"link 'buyTrainTicket' grezzi: {raw}\n"
+        f"card lette: {len(cards)}\n"
+        f"corrispondenze MILANO→ROMA: {matches}\n"
+        f"segnali di blocco: {', '.join(flags) if flags else 'nessuno'}",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Callback dei pulsanti del menu (fuori dal wizard)
 # ---------------------------------------------------------------------------
@@ -913,6 +944,7 @@ def build_application():
     app.add_handler(CommandHandler(["riprendi", "riattiva"], cmd_resume))
     app.add_handler(CommandHandler("stato", cmd_status))
     app.add_handler(CommandHandler(["pulisci", "clear"], cmd_clear))
+    app.add_handler(CommandHandler("debug", cmd_debug))
     app.add_handler(CallbackQueryHandler(on_menu, pattern=r"^(list|pause|resume|del:\d+|avail:\d+)$"))
 
     app.job_queue.run_repeating(check_job, interval=CHECK_INTERVAL, first=10)
