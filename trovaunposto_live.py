@@ -380,6 +380,7 @@ def notify_text(search, card, match):
 
 def main_menu_kb(paused):
     rows = [
+        [InlineKeyboardButton("🔎 Cerca ora (senza salvare)", callback_data="find")],
         [InlineKeyboardButton("➕ Nuova ricerca", callback_data="new")],
         [InlineKeyboardButton("📋 Le mie ricerche", callback_data="list")],
         [InlineKeyboardButton("▶️ Riprendi" if paused else "⏸️ Pausa",
@@ -603,6 +604,16 @@ def price_kb():
     ])
 
 
+async def wiz_start_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["mode"] = "add"
+    return await wiz_start(update, context)
+
+
+async def wiz_start_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["mode"] = "search"
+    return await wiz_start(update, context)
+
+
 async def wiz_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
         return ConversationHandler.END
@@ -740,8 +751,24 @@ def render_matches(search, matches):
 
 async def _finish(update, context, send):
     d = context.user_data.get("draft", {})
+    mode = context.user_data.get("mode", "add")
     search = make_search(d.get("dep", ""), d.get("arr", ""), d.get("date", ""),
                          d.get("tfrom", ""), d.get("tto", ""), d.get("maxp"))
+
+    if mode == "search":
+        # Sola consultazione: NON salva la ricerca e non registra nulla.
+        try:
+            matches = await asyncio.to_thread(lambda: find_matches(search))
+            await send(render_matches(search, matches))
+            await send("ℹ️ Solo consultazione: questa ricerca non è stata salvata. "
+                       "Per essere avvisato dei nuovi biglietti usa ➕ <b>Nuova ricerca</b>.")
+        except Exception:
+            await send("Non sono riuscito a leggere i biglietti ora; riprova tra poco.")
+        context.user_data.pop("draft", None)
+        context.user_data.pop("mode", None)
+        return ConversationHandler.END
+
+    # mode == "add": salva la ricerca e attiva gli avvisi.
     store = context.application.bot_data["store"]
     store["searches"].append(search)
     save_store(store)
@@ -760,6 +787,7 @@ async def _finish(update, context, send):
     except Exception:
         await send("Non sono riuscito a leggere i biglietti ora; li controllerò al prossimo giro.")
     context.user_data.pop("draft", None)
+    context.user_data.pop("mode", None)
     return ConversationHandler.END
 
 
@@ -857,8 +885,10 @@ def build_application():
 
     wizard = ConversationHandler(
         entry_points=[
-            CommandHandler("aggiungi", wiz_start),
-            CallbackQueryHandler(wiz_start, pattern=r"^new$"),
+            CommandHandler("aggiungi", wiz_start_add),
+            CommandHandler("cerca", wiz_start_search),
+            CallbackQueryHandler(wiz_start_add, pattern=r"^new$"),
+            CallbackQueryHandler(wiz_start_search, pattern=r"^find$"),
         ],
         states={
             ASK_DEP: [CallbackQueryHandler(wiz_dep_btn, pattern=r"^city\|"),

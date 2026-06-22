@@ -42,7 +42,8 @@ indicata da `DATA_DIR` (su Railway è un disco persistente montato su `/data`).
 
 ## Comandi e pulsanti del bot
 
-- **➕ Nuova ricerca** (o `/aggiungi`): crea una ricerca guidata dai bottoni.
+- **🔎 Cerca ora** (o `/cerca`): consulta i biglietti per una tratta/giorno **senza salvare** la ricerca.
+- **➕ Nuova ricerca** (o `/aggiungi`): crea una ricerca guidata dai bottoni (con avvisi sui nuovi).
 - **📋 Le mie ricerche** (o `/lista`): vedi e rimuovi le ricerche.
 - **⏸️ Pausa / ▶️ Riprendi** (o `/pausa`, `/riprendi`): ferma/riattiva gli avvisi.
 - `/stato`: stato e numero di ricerche.
