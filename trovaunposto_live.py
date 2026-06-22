@@ -421,8 +421,12 @@ async def show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=Fal
         text = "📋 <b>Le tue ricerche attive:</b>\n\n" + "\n".join(
             f"{i+1}. {esc(search_summary(s))}" for i, s in enumerate(searches)
         )
-        rows = [[InlineKeyboardButton(f"🗑 Rimuovi #{i+1}", callback_data=f"del:{i}")]
-                for i in range(len(searches))]
+        rows = []
+        for i in range(len(searches)):
+            rows.append([
+                InlineKeyboardButton(f"🔎 Disponibili #{i+1}", callback_data=f"avail:{i}"),
+                InlineKeyboardButton(f"🗑 Rimuovi #{i+1}", callback_data=f"del:{i}"),
+            ])
         rows.append([InlineKeyboardButton("➕ Nuova ricerca", callback_data="new")])
         kb = InlineKeyboardMarkup(rows)
     if edit and update.callback_query:
@@ -494,6 +498,18 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_store(store)
             await q.edit_message_text(f"🗑 Rimossa: {esc(search_summary(removed))}")
         await show_list(update, context)
+    elif data.startswith("avail:"):
+        idx = int(data.split(":")[1])
+        if 0 <= idx < len(store["searches"]):
+            search = store["searches"][idx]
+            await q.message.reply_text("🔎 Controllo i biglietti disponibili ora…")
+            try:
+                matches = await asyncio.to_thread(lambda s=search: find_matches(s))
+                await q.message.reply_text(
+                    render_matches(search, matches),
+                    parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+            except Exception:
+                await q.message.reply_text("Non sono riuscito a controllare ora, riprova tra poco.")
 
 
 # ---------------------------------------------------------------------------
@@ -659,6 +675,39 @@ async def wiz_time_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ASK_PRICE
 
 
+def find_matches(search):
+    """Scarica e ritorna i biglietti che corrispondono alla ricerca, ordinati."""
+    out = []
+    for c in parse_page(fetch(build_search_url(search))):
+        m = ticket_matches(c, search)
+        if m:
+            out.append((c, m))
+    out.sort(key=lambda cm: (cm[1].get("date") or "", cm[1].get("dep_time") or ""))
+    return out
+
+
+def render_matches(search, matches):
+    """Messaggio con l'elenco dei biglietti disponibili ora."""
+    if not matches:
+        return (f"🔎 <b>{esc(search.get('name'))}</b>\n"
+                "Al momento non c'è nessun biglietto che rispetta i criteri.")
+    lines = [f"🔎 <b>{esc(search.get('name'))}</b> — {len(matches)} disponibili ora:"]
+    for i, (card, m) in enumerate(matches[:10], 1):
+        date = f"📅 {esc(m['date'])} " if m.get("date") else ""
+        tempo = f"🕒 {esc(m.get('dep_time',''))}→{esc(m.get('arr_time',''))}"
+        prezzo = ""
+        if card.get("price") is not None:
+            p = card["price"]
+            prezzo = f" · 💶 {int(p) if float(p).is_integer() else p}€"
+        riga = f"{i}. {date}{tempo}{prezzo}"
+        if card.get("link"):
+            riga += f" — <a href=\"{esc(card['link'])}\">apri</a>"
+        lines.append(riga)
+    if len(matches) > 10:
+        lines.append(f"…e altri {len(matches) - 10}.")
+    return "\n".join(lines)
+
+
 async def _finish(update, context, send):
     d = context.user_data.get("draft", {})
     search = make_search(d.get("dep", ""), d.get("arr", ""), d.get("date", ""),
@@ -666,21 +715,20 @@ async def _finish(update, context, send):
     store = context.application.bot_data["store"]
     store["searches"].append(search)
     save_store(store)
-    # registra i biglietti già presenti senza avvisare (niente valanga iniziale)
+    await send(f"✅ <b>Ricerca creata!</b>\n{esc(search_summary(search))}")
+    # mostra i biglietti già disponibili ora e li registra (senza riavvisare)
     seen = context.application.bot_data["seen"]
     try:
-        cards = await asyncio.to_thread(lambda: parse_page(fetch(build_search_url(search))))
+        matches = await asyncio.to_thread(lambda: find_matches(search))
         now = dt.datetime.utcnow().timestamp()
-        n = 0
-        for c in cards:
-            if ticket_matches(c, search):
-                seen[c["id"]] = now
-                n += 1
+        for card, _m in matches:
+            seen[card["id"]] = now
         context.application.bot_data["seen"] = save_seen(seen)
-        extra = f"\nAl momento ci sono {n} biglietti che corrispondono; ti avviserò dei <b>prossimi</b>."
+        await send(render_matches(search, matches))
+        if matches:
+            await send("Da ora ti avviserò solo dei <b>nuovi</b> biglietti che compaiono.")
     except Exception:
-        extra = "\nControllerò i biglietti al prossimo giro."
-    await send(f"✅ <b>Ricerca creata!</b>\n{esc(search_summary(search))}{extra}")
+        await send("Non sono riuscito a leggere i biglietti ora; li controllerò al prossimo giro.")
     context.user_data.pop("draft", None)
     return ConversationHandler.END
 
@@ -693,7 +741,8 @@ async def wiz_price_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text("Scrivimi il prezzo massimo in euro, es. 45:")
         return ASK_PRICE
     context.user_data["draft"]["maxp"] = None if val == "none" else int(val)
-    return await _finish(update, context, lambda t: q.message.reply_text(t, parse_mode=ParseMode.HTML))
+    return await _finish(update, context,
+                         lambda t: q.message.reply_text(t, parse_mode=ParseMode.HTML, disable_web_page_preview=True))
 
 
 async def wiz_price_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -702,7 +751,8 @@ async def wiz_price_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Scrivi solo un numero, es. 45 (oppure premi 'Nessun limite').")
         return ASK_PRICE
     context.user_data["draft"]["maxp"] = int(raw)
-    return await _finish(update, context, lambda t: update.message.reply_text(t, parse_mode=ParseMode.HTML))
+    return await _finish(update, context,
+                         lambda t: update.message.reply_text(t, parse_mode=ParseMode.HTML, disable_web_page_preview=True))
 
 
 async def wiz_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -802,7 +852,7 @@ def build_application():
     app.add_handler(CommandHandler("pausa", cmd_pause))
     app.add_handler(CommandHandler(["riprendi", "riattiva"], cmd_resume))
     app.add_handler(CommandHandler("stato", cmd_status))
-    app.add_handler(CallbackQueryHandler(on_menu, pattern=r"^(list|pause|resume|del:\d+)$"))
+    app.add_handler(CallbackQueryHandler(on_menu, pattern=r"^(list|pause|resume|del:\d+|avail:\d+)$"))
 
     app.job_queue.run_repeating(check_job, interval=CHECK_INTERVAL, first=10)
     return app
