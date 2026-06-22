@@ -1,0 +1,15 @@
+{
+  "notify_on_first_run": false,
+  "searches": [
+    {
+      "name": "Milano → Roma (esempio)",
+      "search_url": "https://trovaunposto.it/trains/searchTrainTicket?departure=MILANO%28TUTTE+LE+STAZIONI%29&departure_id=MILANO%28TUTTE+LE+STAZIONI%29&arrival=ROMA%28TUTTE+LE+STAZIONI%29&arrival_id=ROMA%28TUTTE+LE+STAZIONI%29&date=",
+      "match_departure_contains": "MILANO",
+      "match_arrival_contains": "ROMA",
+      "match_date": "",
+      "time_from": "",
+      "time_to": "",
+      "max_price": null
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+# Variabili locali (NON committare i token!)
+secrets.local.json
+.env
+__pycache__/
+*.pyc
