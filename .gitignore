@@ -3,3 +3,6 @@ secrets.local.json
 .env
 __pycache__/
 *.pyc
+
+# Dati locali del bot (creati a runtime)
+data/
