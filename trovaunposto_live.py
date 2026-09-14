@@ -1197,10 +1197,29 @@ async def wiz_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------------------------------------------------------------------------
 # Controllo periodico dei biglietti
 # ---------------------------------------------------------------------------
+def iter_searches(store, only_active=True):
+    """Coppie (user_id, search). Con only_active salta gli utenti in pausa."""
+    for uid, user in store["users"].items():
+        if only_active and user.get("paused"):
+            continue
+        for s in user.get("searches", []):
+            yield uid, s
+
+
+async def broadcast(bot, store, text):
+    """Manda lo stesso messaggio a tutti gli utenti (errori di invio solo loggati)."""
+    for uid in list(store["users"]):
+        try:
+            await bot.send_message(chat_id=uid, text=text, parse_mode=ParseMode.HTML)
+        except Exception as e:  # noqa: BLE001
+            log.warning("broadcast a %s fallito: %s", uid, e)
+
+
 async def check_job(context: ContextTypes.DEFAULT_TYPE):
     app = context.application
     store = app.bot_data["store"]
-    if store.get("paused") or not store.get("searches"):
+    todo = list(iter_searches(store, only_active=True))
+    if not todo:
         return
     now = dt.datetime.utcnow().timestamp()
     # Auto-rallentamento: se il sito è in difficoltà, salta i controlli finché non scade.
@@ -1209,25 +1228,26 @@ async def check_job(context: ContextTypes.DEFAULT_TYPE):
     seen = app.bot_data["seen"]
     changed = False
     attempted = failures = 0
-    for search in list(store["searches"]):
+    for uid, search in todo:
         attempted += 1
         try:
             matches = await asyncio.to_thread(lambda s=search: find_matches(s))
         except Exception as e:  # noqa: BLE001
             failures += 1
-            log.warning("controllo fallito per %s: %s", search.get("name"), e)
+            log.warning("controllo fallito per %s (%s): %s", search.get("name"), uid, e)
             continue
         for card, m in matches:
-            if card["id"] in seen:
+            key = seen_key(uid, card["id"])
+            if key in seen:
                 continue
-            seen[card["id"]] = now
+            seen[key] = now
             changed = True
             try:
                 await context.bot.send_message(
-                    chat_id=OWNER, text=notify_text(search, card, m),
+                    chat_id=uid, text=notify_text(search, card, m),
                     parse_mode=ParseMode.HTML, disable_web_page_preview=False)
             except Exception as e:  # noqa: BLE001
-                log.warning("invio notifica fallito: %s", e)
+                log.warning("invio notifica a %s fallito: %s", uid, e)
     if changed:
         app.bot_data["seen"] = save_seen(seen)
 
@@ -1238,23 +1258,15 @@ async def check_job(context: ContextTypes.DEFAULT_TYPE):
             app.bot_data["backoff_until"] = now + SLOW_SECONDS
             if not app.bot_data.get("slowed"):
                 app.bot_data["slowed"] = True
-                try:
-                    await context.bot.send_message(
-                        chat_id=OWNER,
-                        text="⚠️ Il sito non risponde da qualche minuto: ho <b>rallentato</b> i "
-                             "controlli per non sovraccaricarlo. Ti avviso appena torna disponibile.",
-                        parse_mode=ParseMode.HTML)
-                except Exception:  # noqa: BLE001
-                    pass
+                await broadcast(
+                    context.bot, store,
+                    "⚠️ Il sito non risponde da qualche minuto: ho <b>rallentato</b> i "
+                    "controlli per non sovraccaricarlo. Ti avviso appena torna disponibile.")
     else:
         if app.bot_data.get("slowed"):
             app.bot_data["slowed"] = False
-            try:
-                await context.bot.send_message(
-                    chat_id=OWNER,
-                    text="✅ Il sito risponde di nuovo: controlli ripristinati alla frequenza normale.")
-            except Exception:  # noqa: BLE001
-                pass
+            await broadcast(context.bot, store,
+                            "✅ Il sito risponde di nuovo: controlli ripristinati alla frequenza normale.")
         app.bot_data["fail_streak"] = 0
         app.bot_data["backoff_until"] = 0
 
@@ -1262,24 +1274,27 @@ async def check_job(context: ContextTypes.DEFAULT_TYPE):
 async def on_startup(app: Application):
     app.bot_data["store"] = load_store()
     app.bot_data["seen"] = load_seen()
+    store = app.bot_data["store"]
+    all_searches = list(iter_searches(store, only_active=False))
     # primo avvio "pulito": se non ho memoria, registro i biglietti attuali in
     # silenzio così non parte una valanga di notifiche al primo giro.
-    if not app.bot_data["seen"] and app.bot_data["store"]["searches"]:
+    if not app.bot_data["seen"] and all_searches:
         seen = {}
         now = dt.datetime.utcnow().timestamp()
-        for search in app.bot_data["store"]["searches"]:
+        for uid, search in all_searches:
             try:
                 matches = await asyncio.to_thread(lambda s=search: find_matches(s))
             except Exception:
                 continue
             for c, _m in matches:
-                seen[c["id"]] = now
+                seen[seen_key(uid, c["id"])] = now
         app.bot_data["seen"] = save_seen(seen)
-    log.info("Avviato. Ricerche: %d, intervallo %ds.",
-             len(app.bot_data["store"]["searches"]), CHECK_INTERVAL)
+    log.info("Avviato. Utenti: %d, ricerche: %d, intervallo %ds.",
+             len(store["users"]), len(all_searches), CHECK_INTERVAL)
     try:
+        admin = ensure_admin(store, OWNER)
         await app.bot.send_message(chat_id=OWNER, text=WELCOME, parse_mode=ParseMode.HTML,
-                                   reply_markup=main_menu_kb(app.bot_data["store"]["paused"]))
+                                   reply_markup=main_menu_kb(admin["paused"]))
     except Exception as e:  # noqa: BLE001
         log.warning("Impossibile inviare il messaggio di avvio: %s", e)
 
