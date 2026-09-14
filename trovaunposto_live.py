@@ -1235,12 +1235,17 @@ async def check_job(context: ContextTypes.DEFAULT_TYPE):
     changed = False
     attempted = failures = 0
     for uid, search in todo:
+        if uid not in store["users"]:
+            continue
         attempted += 1
         try:
             matches = await asyncio.to_thread(lambda s=search: find_matches(s))
         except Exception as e:  # noqa: BLE001
             failures += 1
             log.warning("controllo fallito per %s (%s): %s", search.get("name"), uid, e)
+            continue
+        # utente revocato nel frattempo: niente avvisi né memoria
+        if uid not in store["users"]:
             continue
         for card, m in matches:
             key = seen_key(uid, card["id"])
