@@ -624,11 +624,14 @@ async def register_commands(bot):
         await bot.set_my_commands(
             [BotCommand(c, d) for c, d in commands_for("guest")],
             scope=BotCommandScopeDefault())
+    except Exception as e:  # noqa: BLE001
+        log.warning("registrazione comandi (tutti) fallita: %s", e)
+    try:
         await bot.set_my_commands(
             [BotCommand(c, d) for c, d in commands_for("admin")],
             scope=BotCommandScopeChat(chat_id=int(OWNER)))
     except Exception as e:  # noqa: BLE001
-        log.warning("registrazione comandi fallita: %s", e)
+        log.warning("registrazione comandi (admin) fallita: %s", e)
 
 
 # Stati del wizard
@@ -687,6 +690,15 @@ async def on_unauthorized_text(update: Update, context: ContextTypes.DEFAULT_TYP
         await _handle_invite_code(update, context, text)
     else:
         await update.effective_message.reply_text(PRIVATE_MSG, reply_markup=ReplyKeyboardRemove())
+
+
+async def on_stale_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bottone di un messaggio vecchio (es. dopo un riavvio): rispondi invece di lasciarlo girare."""
+    try:
+        await update.callback_query.answer(
+            "Questo bottone non è più attivo: ricomincia dalla tastiera qui sotto.", show_alert=True)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def on_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1060,7 +1072,7 @@ async def _reject_if_over_limit(update, user):
     if len(user["searches"]) < limit:
         return False
     if update.callback_query:
-        await update.callback_query.message.reply_text(limit_msg(limit), parse_mode=ParseMode.HTML)
+        await update.effective_chat.send_message(limit_msg(limit), parse_mode=ParseMode.HTML)
     else:
         await update.effective_message.reply_text(limit_msg(limit), parse_mode=ParseMode.HTML)
     return True
@@ -1069,11 +1081,9 @@ async def _reject_if_over_limit(update, user):
 async def wiz_start_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     store = context.application.bot_data["store"]
     user = get_user(update, store)
-    if update.callback_query:
-        await update.callback_query.answer()
-    if user is None:
-        return ConversationHandler.END
-    if await _reject_if_over_limit(update, user):
+    if user is None or await _reject_if_over_limit(update, user):
+        if update.callback_query:
+            await update.callback_query.answer()
         return ConversationHandler.END
     context.user_data["mode"] = "add"
     return await wiz_start(update, context)
@@ -1083,20 +1093,24 @@ async def wiz_return(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Bottone 'Aggiungi anche il ritorno': città invertite, si riparte dal giorno."""
     q = update.callback_query
     await q.answer()
+    try:
+        await q.edit_message_reply_markup(None)
+    except Exception:  # noqa: BLE001
+        pass
     store = context.application.bot_data["store"]
     user = get_user(update, store)
     if user is None:
         return ConversationHandler.END
     route = context.user_data.get("last_route")
     if not route:
-        await q.message.reply_text("Ricomincia da ➕ Nuova ricerca.")
+        await update.effective_chat.send_message("Ricomincia da ➕ Nuova ricerca.")
         return ConversationHandler.END
     if await _reject_if_over_limit(update, user):
         return ConversationHandler.END
     context.user_data["mode"] = "add"
     d = reverse_route(route)
     context.user_data["draft"] = d
-    await q.message.reply_text(
+    await update.effective_chat.send_message(
         f"🔁 <b>Ritorno: {esc(d['dep'].title())} → {esc(d['arr'].title())}</b>\nChe giorno?",
         parse_mode=ParseMode.HTML, reply_markup=days_kb())
     return ASK_DAY
@@ -1106,19 +1120,23 @@ async def wiz_save_last(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Bottone 'Salva come ricerca' dopo Cerca ora: riusa i criteri appena cercati e va al riepilogo."""
     q = update.callback_query
     await q.answer()
+    try:
+        await q.edit_message_reply_markup(None)
+    except Exception:  # noqa: BLE001
+        pass
     store = context.application.bot_data["store"]
     user = get_user(update, store)
     if user is None:
         return ConversationHandler.END
     d = context.user_data.get("last_draft")
     if not d:
-        await q.message.reply_text("Ricomincia da ➕ Nuova ricerca.")
+        await update.effective_chat.send_message("Ricomincia da ➕ Nuova ricerca.")
         return ConversationHandler.END
     if await _reject_if_over_limit(update, user):
         return ConversationHandler.END
     context.user_data["mode"] = "add"
     context.user_data["draft"] = dict(d)
-    await q.message.reply_text(confirm_text(draft_search(d)), parse_mode=ParseMode.HTML,
+    await update.effective_chat.send_message(confirm_text(draft_search(d)), parse_mode=ParseMode.HTML,
                                reply_markup=confirm_kb())
     return ASK_CONFIRM
 
@@ -1131,12 +1149,18 @@ async def wiz_start_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def wiz_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if get_user(update, context.application.bot_data["store"]) is None:
         if update.callback_query:
-            await update.callback_query.answer()
+            try:
+                await update.callback_query.answer()
+            except Exception:  # noqa: BLE001
+                pass
         return ConversationHandler.END
     context.user_data["draft"] = {}
     text = "🚆 <b>Da dove parti?</b>\nScegli una città o scrivine un'altra."
     if update.callback_query:
-        await update.callback_query.answer()
+        try:
+            await update.callback_query.answer()
+        except Exception:  # noqa: BLE001
+            pass
         await update.callback_query.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=cities_kb())
     else:
         await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=cities_kb())
@@ -1410,7 +1434,7 @@ async def wiz_confirm_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:  # noqa: BLE001
             pass
         return await _finish(update, context,
-                             lambda t, **kw: q.message.reply_text(
+                             lambda t, **kw: update.effective_chat.send_message(
                                  t, parse_mode=ParseMode.HTML, disable_web_page_preview=True, **kw))
     if val == "restart":
         try:
@@ -1611,7 +1635,9 @@ def build_application():
         on_menu,
         pattern=r"^(list|pause|resume|del:\d+|avail:\d+|revoke:\d+|revoke_ok:\d+|revoke_no)$"))
     app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, on_unauthorized_text), group=1)
+        filters.TEXT & ~filters.Regex(r"^/start\b") & filters.ChatType.PRIVATE,
+        on_unauthorized_text), group=1)
+    app.add_handler(CallbackQueryHandler(on_stale_callback), group=2)
 
     app.job_queue.run_repeating(check_job, interval=CHECK_INTERVAL, first=10)
     return app
