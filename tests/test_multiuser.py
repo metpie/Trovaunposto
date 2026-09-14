@@ -219,3 +219,18 @@ def test_main_kb_rows_guest_and_admin():
     rows = bot.main_kb_rows(admin)
     assert len(rows) == 3 and rows[2] == [bot.BTN_INVITE, bot.BTN_USERS]
     assert all(0 < len(d) <= 40 for _, d in bot.commands_for("admin"))
+
+
+# --- Riepilogo e ritorno ------------------------------------------------------
+
+def test_reverse_route_swaps_cities():
+    assert bot.reverse_route({"dep": "Roma", "arr": "Milano", "date": "x"}) == {"dep": "Milano", "arr": "Roma"}
+    assert bot.reverse_route({}) == {"dep": "", "arr": ""}
+
+
+def test_draft_search_and_confirm_text():
+    d = {"dep": "Roma", "arr": "Milano", "date": "2026-10-01", "tfrom": "08:00", "tto": "12:00", "maxp": 50}
+    s = bot.draft_search(d)
+    assert s["name"] == "Roma → Milano" and s["max_price"] == 50
+    t = bot.confirm_text(s)
+    assert "Riepilogo" in t and "Confermi?" in t and "01/10/2026" in t and "max 50€" in t

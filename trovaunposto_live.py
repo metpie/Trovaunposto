@@ -630,7 +630,7 @@ async def register_commands(bot):
 
 
 # Stati del wizard
-ASK_DEP, ASK_ARR, ASK_DAY, ASK_TIME, ASK_PRICE = range(5)
+ASK_DEP, ASK_ARR, ASK_DAY, ASK_TIME, ASK_PRICE, ASK_CONFIRM = range(6)
 
 
 # ---------------------------------------------------------------------------
@@ -1013,23 +1013,84 @@ def price_kb():
     ])
 
 
+def confirm_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Conferma", callback_data="confirm|ok")],
+        [InlineKeyboardButton("🔁 Ricomincia", callback_data="confirm|restart"),
+         InlineKeyboardButton("❌ Annulla", callback_data="confirm|cancel")],
+    ])
+
+
+def after_add_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔁 Aggiungi anche il ritorno", callback_data="return")],
+        [InlineKeyboardButton("📋 Le mie ricerche", callback_data="list")],
+    ])
+
+
+def after_search_kb():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("➕ Salva come ricerca", callback_data="new")]])
+
+
+def draft_search(d):
+    return make_search(d.get("dep", ""), d.get("arr", ""), d.get("date", ""),
+                       d.get("tfrom", ""), d.get("tto", ""), d.get("maxp"))
+
+
+def reverse_route(draft):
+    return {"dep": draft.get("arr", ""), "arr": draft.get("dep", "")}
+
+
+def confirm_text(search):
+    return f"📝 <b>Riepilogo</b>\n{esc(search_summary(search))}\n\nConfermi?"
+
+
+async def _reject_if_over_limit(update, user):
+    """True (dopo aver risposto) se l'utente ha già raggiunto il tetto di ricerche."""
+    limit = search_limit(user)
+    if len(user["searches"]) < limit:
+        return False
+    if update.callback_query:
+        await update.callback_query.message.reply_text(limit_msg(limit), parse_mode=ParseMode.HTML)
+    else:
+        await update.effective_message.reply_text(limit_msg(limit), parse_mode=ParseMode.HTML)
+    return True
+
+
 async def wiz_start_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     store = context.application.bot_data["store"]
     user = get_user(update, store)
+    if update.callback_query:
+        await update.callback_query.answer()
     if user is None:
-        if update.callback_query:
-            await update.callback_query.answer()
         return ConversationHandler.END
-    limit = search_limit(user)
-    if len(user["searches"]) >= limit:
-        if update.callback_query:
-            await update.callback_query.answer()
-            await update.callback_query.message.reply_text(limit_msg(limit), parse_mode=ParseMode.HTML)
-        else:
-            await update.effective_message.reply_text(limit_msg(limit), parse_mode=ParseMode.HTML)
+    if await _reject_if_over_limit(update, user):
         return ConversationHandler.END
     context.user_data["mode"] = "add"
     return await wiz_start(update, context)
+
+
+async def wiz_return(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bottone 'Aggiungi anche il ritorno': città invertite, si riparte dal giorno."""
+    q = update.callback_query
+    await q.answer()
+    store = context.application.bot_data["store"]
+    user = get_user(update, store)
+    if user is None:
+        return ConversationHandler.END
+    route = context.user_data.get("last_route")
+    if not route:
+        await q.message.reply_text("Ricomincia da ➕ Nuova ricerca.")
+        return ConversationHandler.END
+    if await _reject_if_over_limit(update, user):
+        return ConversationHandler.END
+    context.user_data["mode"] = "add"
+    d = reverse_route(route)
+    context.user_data["draft"] = d
+    await q.message.reply_text(
+        f"🔁 <b>Ritorno: {esc(d['dep'].title())} → {esc(d['arr'].title())}</b>\nChe giorno?",
+        parse_mode=ParseMode.HTML, reply_markup=days_kb())
+    return ASK_DAY
 
 
 async def wiz_start_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1233,16 +1294,14 @@ async def _finish(update, context, send):
         return ConversationHandler.END
     d = context.user_data.get("draft", {})
     mode = context.user_data.get("mode", "add")
-    search = make_search(d.get("dep", ""), d.get("arr", ""), d.get("date", ""),
-                         d.get("tfrom", ""), d.get("tto", ""), d.get("maxp"))
+    search = draft_search(d)
 
     if mode == "search":
         # Sola consultazione: NON salva la ricerca e non registra nulla.
         try:
             matches = await asyncio.to_thread(lambda: find_matches(search))
             await send(render_matches(search, matches))
-            await send("ℹ️ Solo consultazione: questa ricerca non è stata salvata. "
-                       "Per essere avvisato dei nuovi biglietti usa ➕ <b>Nuova ricerca</b>.")
+            await send("ℹ️ Solo consultazione: questa ricerca non è stata salvata.", reply_markup=after_search_kb())
         except Exception:
             await send("Non sono riuscito a leggere i biglietti ora; riprova tra poco.")
         context.user_data.pop("draft", None)
@@ -1259,6 +1318,7 @@ async def _finish(update, context, send):
         return ConversationHandler.END
     user["searches"].append(search)
     save_store(store)
+    context.user_data["last_route"] = {"dep": d.get("dep", ""), "arr": d.get("arr", "")}
     await send(f"✅ <b>Ricerca creata!</b>\n{esc(search_summary(search))}")
     # mostra i biglietti già disponibili ora e li registra (senza riavvisare)
     seen = context.application.bot_data["seen"]
@@ -1269,10 +1329,9 @@ async def _finish(update, context, send):
             seen[seen_key(uid, card["id"])] = now
         context.application.bot_data["seen"] = save_seen(seen)
         await send(render_matches(search, matches))
-        if matches:
-            await send("Da ora ti avviserò solo dei <b>nuovi</b> biglietti che compaiono.")
     except Exception:
         await send("Non sono riuscito a leggere i biglietti ora; li controllerò al prossimo giro.")
+    await send("Da ora ti avviserò dei <b>nuovi</b> biglietti che compaiono.", reply_markup=after_add_kb())
     context.user_data.pop("draft", None)
     context.user_data.pop("mode", None)
     return ConversationHandler.END
@@ -1286,8 +1345,9 @@ async def wiz_price_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text("Scrivimi il prezzo massimo in euro, es. 45:")
         return ASK_PRICE
     context.user_data["draft"]["maxp"] = None if val == "none" else int(val)
-    return await _finish(update, context,
-                         lambda t: q.message.reply_text(t, parse_mode=ParseMode.HTML, disable_web_page_preview=True))
+    return await _after_price(update, context,
+                              lambda t, **kw: q.message.reply_text(
+                                  t, parse_mode=ParseMode.HTML, disable_web_page_preview=True, **kw))
 
 
 async def wiz_price_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1296,8 +1356,37 @@ async def wiz_price_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Scrivi solo un numero, es. 45 (oppure premi 'Nessun limite').")
         return ASK_PRICE
     context.user_data["draft"]["maxp"] = int(raw)
-    return await _finish(update, context,
-                         lambda t: update.message.reply_text(t, parse_mode=ParseMode.HTML, disable_web_page_preview=True))
+    return await _after_price(update, context,
+                              lambda t, **kw: update.message.reply_text(
+                                  t, parse_mode=ParseMode.HTML, disable_web_page_preview=True, **kw))
+
+
+async def _after_price(update, context, send):
+    if context.user_data.get("mode") == "search":
+        return await _finish(update, context, send)
+    search = draft_search(context.user_data.get("draft", {}))
+    await send(confirm_text(search), reply_markup=confirm_kb())
+    return ASK_CONFIRM
+
+
+async def wiz_confirm_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    val = q.data.split("|", 1)[1]
+    if val == "ok":
+        try:
+            await q.edit_message_reply_markup(None)
+        except Exception:  # noqa: BLE001
+            pass
+        return await _finish(update, context,
+                             lambda t, **kw: q.message.reply_text(
+                                 t, parse_mode=ParseMode.HTML, disable_web_page_preview=True, **kw))
+    if val == "restart":
+        return await wiz_start(update, context)
+    context.user_data.pop("draft", None)
+    context.user_data.pop("mode", None)
+    await q.edit_message_text("Operazione annullata.")
+    return ConversationHandler.END
 
 
 async def wiz_menu_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1310,6 +1399,7 @@ async def wiz_menu_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def wiz_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("draft", None)
+    context.user_data.pop("mode", None)
     await update.effective_message.reply_text("Operazione annullata.")
     return ConversationHandler.END
 
@@ -1445,6 +1535,7 @@ def build_application():
             CommandHandler("cerca", wiz_start_search),
             CallbackQueryHandler(wiz_start_add, pattern=r"^new$"),
             CallbackQueryHandler(wiz_start_search, pattern=r"^find$"),
+            CallbackQueryHandler(wiz_return, pattern=r"^return$"),
             MessageHandler(filters.Text([BTN_NEW]), wiz_start_add),
             MessageHandler(filters.Text([BTN_FIND]), wiz_start_search),
         ],
@@ -1459,6 +1550,7 @@ def build_application():
                        MessageHandler(WIZ_TEXT, wiz_time_txt)],
             ASK_PRICE: [CallbackQueryHandler(wiz_price_btn, pattern=r"^price\|"),
                         MessageHandler(WIZ_TEXT, wiz_price_txt)],
+            ASK_CONFIRM: [CallbackQueryHandler(wiz_confirm_btn, pattern=r"^confirm\|")],
         },
         fallbacks=[CommandHandler("annulla", wiz_cancel), MessageHandler(MENU_FILTER, wiz_menu_fallback)],
         allow_reentry=True,
