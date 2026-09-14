@@ -199,6 +199,7 @@ def test_commands_for_roles():
     assert set(admin) - set(guest) == {"invita", "utenti", "pulisci"}
     assert len(set(admin)) == len(admin)
     assert "debug" not in admin
+    assert all(0 < len(d) <= 40 for _, d in bot.commands_for("admin"))
 
 
 # --- Tastiera fissa ------------------------------------------------------------
@@ -218,7 +219,6 @@ def test_main_kb_rows_guest_and_admin():
     admin = bot.new_user("Matteo", "admin", NOW)
     rows = bot.main_kb_rows(admin)
     assert len(rows) == 3 and rows[2] == [bot.BTN_INVITE, bot.BTN_USERS]
-    assert all(0 < len(d) <= 40 for _, d in bot.commands_for("admin"))
 
 
 # --- Riepilogo e ritorno ------------------------------------------------------

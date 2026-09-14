@@ -572,6 +572,8 @@ BTN_RESUME = "▶️ Riprendi"
 BTN_INVITE = "🔗 Invita"
 BTN_USERS = "👥 Utenti"
 MENU_LABELS = [BTN_FIND, BTN_NEW, BTN_LIST, BTN_PAUSE, BTN_RESUME, BTN_INVITE, BTN_USERS]
+MENU_FILTER = filters.Text(MENU_LABELS)
+WIZ_TEXT = filters.TEXT & ~filters.COMMAND & ~MENU_FILTER
 
 
 def main_kb_rows(user):
@@ -887,11 +889,19 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "pause":
         user["paused"] = True
         save_store(store)
-        await q.message.reply_text("⏸️ Notifiche sospese.", reply_markup=main_kb(user))
+        try:
+            await q.edit_message_reply_markup(None)
+        except Exception:  # noqa: BLE001
+            pass
+        await update.effective_chat.send_message("⏸️ Notifiche sospese.", reply_markup=main_kb(user))
     elif data == "resume":
         user["paused"] = False
         save_store(store)
-        await q.message.reply_text("▶️ Notifiche riattivate.", reply_markup=main_kb(user))
+        try:
+            await q.edit_message_reply_markup(None)
+        except Exception:  # noqa: BLE001
+            pass
+        await update.effective_chat.send_message("▶️ Notifiche riattivate.", reply_markup=main_kb(user))
     elif data.startswith("del:"):
         idx = int(data.split(":")[1])
         if 0 <= idx < len(user["searches"]):
@@ -1525,9 +1535,6 @@ def build_application():
     if not TOKEN or not OWNER:
         raise SystemExit("Imposta le variabili TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID.")
     app = Application.builder().token(TOKEN).post_init(on_startup).build()
-
-    MENU_FILTER = filters.Text(MENU_LABELS)
-    WIZ_TEXT = filters.TEXT & ~filters.COMMAND & ~MENU_FILTER
 
     wizard = ConversationHandler(
         entry_points=[
