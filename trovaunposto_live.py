@@ -488,7 +488,8 @@ def get_user(update: Update, store):
     name = u.full_name or u.username or uid
     changed = False
     if uid == str(OWNER):
-        if uid not in store["users"]:
+        existing = store["users"].get(uid)
+        if existing is None or existing.get("role") != "admin":
             changed = True
         user = ensure_admin(store, OWNER, name)
     else:
@@ -555,6 +556,8 @@ ASK_DEP, ASK_ARR, ASK_DAY, ASK_TIME, ASK_PRICE = range(5)
 # ---------------------------------------------------------------------------
 async def _handle_invite_code(update, context, code):
     """Prova a riscattare un codice per un utente NON autorizzato. Risponde sempre."""
+    if update.effective_user is None:
+        return False
     store = context.application.bot_data["store"]
     u = update.effective_user
     name = u.full_name or u.username or str(u.id)
@@ -594,16 +597,14 @@ async def on_unauthorized_text(update: Update, context: ContextTypes.DEFAULT_TYP
     store = context.application.bot_data["store"]
     if get_user(update, store) is not None:
         return
-    text = (update.message.text or "").strip().upper()
+    text = (update.effective_message.text or "").strip().upper()
     if INVITE_CODE_RE.match(text):
         await _handle_invite_code(update, context, text)
     else:
         await update.effective_message.reply_text(PRIVATE_MSG)
 
 
-async def show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
-    store = context.application.bot_data["store"]
-    user = get_user(update, store)
+async def show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, user, edit=False):
     searches = user["searches"]
     if not searches:
         text = "Non hai ancora ricerche attive.\nPremi ➕ <b>Nuova ricerca</b> per crearne una."
@@ -626,9 +627,10 @@ async def show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=Fal
 
 
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if get_user(update, context.application.bot_data["store"]) is None:
+    user = get_user(update, context.application.bot_data["store"])
+    if user is None:
         return
-    await show_list(update, context)
+    await show_list(update, context, user)
 
 
 async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -777,7 +779,7 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     data = q.data
     if data == "list":
-        await show_list(update, context, edit=True)
+        await show_list(update, context, user, edit=True)
     elif data == "pause":
         user["paused"] = True
         save_store(store)
@@ -792,7 +794,7 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             removed = user["searches"].pop(idx)
             save_store(store)
             await q.edit_message_text(f"🗑 Rimossa: {esc(search_summary(removed))}")
-        await show_list(update, context)
+        await show_list(update, context, user)
     elif data.startswith("avail:"):
         idx = int(data.split(":")[1])
         if 0 <= idx < len(user["searches"]):
@@ -1138,6 +1140,10 @@ async def _finish(update, context, send):
     # mode == "add": salva la ricerca dell'utente e attiva gli avvisi.
     store = context.application.bot_data["store"]
     user = get_user(update, store)
+    if user is None:
+        context.user_data.pop("draft", None)
+        context.user_data.pop("mode", None)
+        return ConversationHandler.END
     uid = str(update.effective_user.id)
     limit = search_limit(user)
     if len(user["searches"]) >= limit:
@@ -1340,7 +1346,8 @@ def build_application():
     app.add_handler(CallbackQueryHandler(
         on_menu,
         pattern=r"^(list|pause|resume|del:\d+|avail:\d+|revoke:\d+|revoke_ok:\d+|revoke_no)$"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_unauthorized_text), group=1)
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, on_unauthorized_text), group=1)
 
     app.job_queue.run_repeating(check_job, interval=CHECK_INTERVAL, first=10)
     return app
