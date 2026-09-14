@@ -10,11 +10,13 @@ Differenze rispetto alla versione a 5 minuti:
 - Controllo dei biglietti ogni ~60 secondi (quasi in tempo reale).
 
 Variabili d'ambiente:
-  TELEGRAM_BOT_TOKEN  (obbligatoria)
-  TELEGRAM_CHAT_ID    (obbligatoria: il tuo id numerico; riceve le notifiche ed è
-                       l'unico autorizzato a comandare il bot)
-  CHECK_INTERVAL      (opzionale, secondi tra un controllo e l'altro, default 60)
-  DATA_DIR            (opzionale, cartella per i dati persistenti, default ./data)
+  TELEGRAM_BOT_TOKEN   (obbligatoria)
+  TELEGRAM_CHAT_ID     (obbligatoria: il tuo id numerico; sei l'amministratore,
+                        puoi invitare altre persone con /invita)
+  CHECK_INTERVAL       (opzionale, secondi tra un controllo e l'altro, default 60)
+  DATA_DIR             (opzionale, cartella per i dati persistenti, default ./data)
+  MAX_SEARCHES_ADMIN   (opzionale, ricerche attive massime per l'admin, default 5)
+  MAX_SEARCHES_GUEST   (opzionale, ricerche attive massime per ogni invitato, default 3)
 """
 
 import asyncio

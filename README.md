@@ -37,6 +37,7 @@ indicata da `DATA_DIR` (su Railway è un disco persistente montato su `/data`).
 | `Procfile` | Comando di avvio per Railway (`python trovaunposto_live.py`). |
 | `GUIDA_BOT_LIVE.md` | Guida passo-passo per metterlo online su Railway. |
 | `.gitignore`, `.gitattributes` | Impostazioni del repository. |
+| `tests/` | Test automatici (`pip install -r requirements-dev.txt` e poi `python -m pytest`). |
 
 ---
 
@@ -49,6 +50,11 @@ indicata da `DATA_DIR` (su Railway è un disco persistente montato su `/data`).
 - `/stato`: stato e numero di ricerche.
 - `/pulisci` (o `/clear`): cancella i messaggi recenti della chat (limite Telegram: ultimi 2 giorni).
 - `/aiuto`: menù principale.
+- `/invita` (solo amministratore): genera un codice d'invito monouso valido 24 ore e un link da inoltrare.
+- `/utenti` (solo amministratore): elenca le persone invitate e permette di revocare l'accesso (le loro ricerche vengono cancellate).
+
+Ogni persona ha le **proprie** ricerche, la propria pausa e riceve solo i propri avvisi.
+Tetto di ricerche attive: 5 per l'amministratore, 3 per ogni invitato (modificabile, vedi sotto).
 
 Al primo avvio (e quando aggiungi una ricerca) il bot registra i biglietti
 **già presenti** senza avvisarti, poi ti notifica solo i **nuovi**.
@@ -60,9 +66,11 @@ Al primo avvio (e quando aggiungi una ricerca) il bot registra i biglietti
 | Variabile | Obbligatoria | Valore |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | sì | Token del bot di @BotFather. |
-| `TELEGRAM_CHAT_ID` | sì | Il tuo id numerico (riceve gli avvisi ed è l'unico autorizzato). |
+| `TELEGRAM_CHAT_ID` | sì | Il tuo id numerico: sei l'amministratore (puoi invitare altri con /invita). |
 | `DATA_DIR` | consigliata | Cartella dati persistenti (su Railway: `/data`). |
 | `CHECK_INTERVAL` | opzionale | Secondi tra un controllo e l'altro (default 60). |
+| `MAX_SEARCHES_ADMIN` | opzionale | Ricerche attive massime per l'amministratore (default 5). |
+| `MAX_SEARCHES_GUEST` | opzionale | Ricerche attive massime per ogni invitato (default 3). |
 
 ---
 

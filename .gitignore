@@ -6,3 +6,4 @@ __pycache__/
 
 # Dati locali del bot (creati a runtime)
 data/
+tests/_data_tmp/

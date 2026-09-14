@@ -65,6 +65,11 @@ Aggiungi (i valori sono gli stessi dei Secret di GitHub):
 | `TELEGRAM_CHAT_ID` | `653739884` |
 | `DATA_DIR` | `/data` |
 | `CHECK_INTERVAL` | `60` |
+| `MAX_SEARCHES_ADMIN` | `5` (facoltativa: ricerche attive massime per te) |
+| `MAX_SEARCHES_GUEST` | `3` (facoltativa: ricerche attive massime per ogni persona invitata) |
+
+Per condividere il bot con qualcuno: scrivi `/invita` al bot, inoltra il link
+che ti risponde. Con `/utenti` vedi e revochi gli accessi.
 
 ### Aggiungi un disco persistente (Volume)
 Serve perché il bot ricordi le tue ricerche anche dopo un riavvio.
