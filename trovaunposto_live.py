@@ -373,10 +373,21 @@ def ensure_admin(store, owner_id, name="", now=None):
 
 def load_store():
     os.makedirs(DATA_DIR, exist_ok=True)
-    raw = _load(SEARCHES_PATH, {})
+    raw = _load(SEARCHES_PATH, None)
+    if raw is None:
+        if os.path.exists(SEARCHES_PATH):
+            log.error("searches.json illeggibile: non lo sovrascrivo. "
+                     "Ripristinalo o rinominalo per ripartire da zero.")
+            raise SystemExit(1)
+        raw = {}
     now = dt.datetime.utcnow().timestamp()
     store = migrate_store(raw, OWNER, now)
     ensure_admin(store, OWNER, now=now)
+    # L'admin è solo chi corrisponde a TELEGRAM_CHAT_ID: eventuali admin
+    # residui di configurazioni precedenti vengono retrocessi a invitati.
+    for uid, u in store["users"].items():
+        if uid != str(OWNER) and u.get("role") == "admin":
+            u["role"] = "guest"
     if store != raw:
         save_store(store)
     return store
@@ -384,8 +395,10 @@ def load_store():
 
 def save_store(store):
     os.makedirs(DATA_DIR, exist_ok=True)
-    with open(SEARCHES_PATH, "w", encoding="utf-8") as f:
+    tmp = SEARCHES_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(store, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, SEARCHES_PATH)
 
 
 def seen_key(user_id, ticket_id):
@@ -401,7 +414,15 @@ def migrate_seen(old, owner_id):
 
 
 def load_seen():
-    raw = _load(SEEN_PATH, {})
+    raw = _load(SEEN_PATH, None)
+    if raw is None:
+        if os.path.exists(SEEN_PATH):
+            log.warning("seen.json illeggibile: lo rinomino e riparto da zero.")
+            try:
+                os.replace(SEEN_PATH, SEEN_PATH + ".corrupt")
+            except OSError as e:
+                log.warning("impossibile mettere da parte seen.json corrotto: %s", e)
+        raw = {}
     seen = migrate_seen(raw, OWNER)
     if seen != raw:
         seen = save_seen(seen)
@@ -411,9 +432,12 @@ def load_seen():
 def save_seen(seen):
     os.makedirs(DATA_DIR, exist_ok=True)
     cutoff = (dt.datetime.utcnow() - dt.timedelta(days=SEEN_RETENTION_DAYS)).timestamp()
-    seen = {k: v for k, v in seen.items() if v >= cutoff}
-    with open(SEEN_PATH, "w", encoding="utf-8") as f:
+    for k in [k for k, v in seen.items() if v < cutoff]:
+        del seen[k]
+    tmp = SEEN_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(seen, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, SEEN_PATH)
     return seen
 
 
@@ -422,7 +446,7 @@ def save_seen(seen):
 # ---------------------------------------------------------------------------
 INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # senza 0/O, 1/I
 INVITE_TTL_SECONDS = 24 * 3600
-INVITE_CODE_RE = re.compile(r"^[A-Z2-9]{6}$")
+INVITE_CODE_RE = re.compile(rf"^[{INVITE_ALPHABET}]{{6}}$")
 
 
 def purge_invites(store, now):
@@ -682,7 +706,7 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if get_user(update, context.application.bot_data["store"]) is None:
         return
     chat_id = update.effective_chat.id
-    last_id = update.message.message_id
+    last_id = update.effective_message.message_id
     deleted = 0
     # Telegram consente ai bot di cancellare i messaggi di una chat privata
     # inviati negli ultimi 2 giorni: proviamo a rimuovere quelli recenti.
@@ -765,6 +789,7 @@ async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(get_user(update, store)):
         return
     purge_invites(store, dt.datetime.utcnow().timestamp())
+    save_store(store)
     text, kb = users_view(store)
     await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
@@ -1121,6 +1146,12 @@ def render_matches(search, matches):
 
 
 async def _finish(update, context, send):
+    store = context.application.bot_data["store"]
+    user = get_user(update, store)
+    if user is None:
+        context.user_data.pop("draft", None)
+        context.user_data.pop("mode", None)
+        return ConversationHandler.END
     d = context.user_data.get("draft", {})
     mode = context.user_data.get("mode", "add")
     search = make_search(d.get("dep", ""), d.get("arr", ""), d.get("date", ""),
@@ -1140,12 +1171,6 @@ async def _finish(update, context, send):
         return ConversationHandler.END
 
     # mode == "add": salva la ricerca dell'utente e attiva gli avvisi.
-    store = context.application.bot_data["store"]
-    user = get_user(update, store)
-    if user is None:
-        context.user_data.pop("draft", None)
-        context.user_data.pop("mode", None)
-        return ConversationHandler.END
     uid = str(update.effective_user.id)
     limit = search_limit(user)
     if len(user["searches"]) >= limit:
@@ -1230,6 +1255,7 @@ async def check_job(context: ContextTypes.DEFAULT_TYPE):
     if not todo:
         return
     now = dt.datetime.utcnow().timestamp()
+    started = now
     # Auto-rallentamento: se il sito è in difficoltà, salta i controlli finché non scade.
     if now < app.bot_data.get("backoff_until", 0):
         return
@@ -1282,6 +1308,11 @@ async def check_job(context: ContextTypes.DEFAULT_TYPE):
                             "✅ Il sito risponde di nuovo: controlli ripristinati alla frequenza normale.")
         app.bot_data["fail_streak"] = 0
         app.bot_data["backoff_until"] = 0
+
+    elapsed = dt.datetime.utcnow().timestamp() - started
+    if elapsed > CHECK_INTERVAL:
+        log.warning("giro di controllo lungo: %.0fs su %d ricerche (intervallo %ds)",
+                    elapsed, attempted, CHECK_INTERVAL)
 
 
 async def on_startup(app: Application):

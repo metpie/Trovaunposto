@@ -1,7 +1,12 @@
+import json
+
+import pytest
+
 import trovaunposto_live as bot
 
 OWNER = "1000"
 NOW = 1_757_800_000.0
+NOW_RECENT = bot.dt.datetime.utcnow().timestamp()
 
 
 def _search(name="Milano → Roma"):
@@ -134,3 +139,51 @@ def test_revoke_user_removes_only_that_user():
     assert "42" not in store["users"]
     assert OWNER in store["users"]
     assert seen == {"1000:1": 1.0, "420:4": 4.0}
+
+
+# --- Revisione finale ---
+
+def test_iter_searches_skips_paused_users_when_only_active():
+    store = bot.empty_store()
+    bot.ensure_admin(store, OWNER, "Matteo", NOW)
+    store["users"][OWNER]["searches"].append(_search("A"))
+    store["users"]["42"] = bot.new_user("Anna", "guest", NOW)
+    store["users"]["42"]["searches"].append(_search("B"))
+    store["users"]["42"]["paused"] = True
+    active = list(bot.iter_searches(store, only_active=True))
+    assert [(u, s["name"]) for u, s in active] == [(OWNER, "A")]
+    everything = list(bot.iter_searches(store, only_active=False))
+    assert sorted((u, s["name"]) for u, s in everything) == [(OWNER, "A"), ("42", "B")]
+
+
+def test_load_store_migrates_v1_file_on_disk(tmp_path, monkeypatch):
+    path = tmp_path / "searches.json"
+    path.write_text(json.dumps({"searches": [_search("Vecchia")], "paused": True}), encoding="utf-8")
+    monkeypatch.setattr(bot, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(bot, "SEARCHES_PATH", str(path))
+    store = bot.load_store()
+    assert store["version"] == bot.STORE_VERSION
+    assert store["users"][OWNER]["searches"][0]["name"] == "Vecchia"
+    assert store["users"][OWNER]["paused"] is True
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["version"] == bot.STORE_VERSION  # riscritto in formato 2
+
+
+def test_load_store_refuses_corrupt_file(tmp_path, monkeypatch):
+    path = tmp_path / "searches.json"
+    path.write_text("{ non è json", encoding="utf-8")
+    monkeypatch.setattr(bot, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(bot, "SEARCHES_PATH", str(path))
+    with pytest.raises(SystemExit):
+        bot.load_store()
+    assert path.read_text(encoding="utf-8") == "{ non è json"  # non sovrascritto
+
+
+def test_save_seen_prunes_in_place_and_returns_same_object(tmp_path, monkeypatch):
+    monkeypatch.setattr(bot, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(bot, "SEEN_PATH", str(tmp_path / "seen.json"))
+    old = (bot.dt.datetime.utcnow() - bot.dt.timedelta(days=bot.SEEN_RETENTION_DAYS + 1)).timestamp()
+    seen = {"1000:1": old, "1000:2": NOW_RECENT}
+    out = bot.save_seen(seen)
+    assert out is seen
+    assert list(seen) == ["1000:2"]
