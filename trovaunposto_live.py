@@ -374,10 +374,10 @@ def ensure_admin(store, owner_id, name="", now=None):
 def load_store():
     os.makedirs(DATA_DIR, exist_ok=True)
     raw = _load(SEARCHES_PATH, None)
-    if raw is None:
+    if raw is None or not isinstance(raw, dict):
         if os.path.exists(SEARCHES_PATH):
-            log.error("searches.json illeggibile: non lo sovrascrivo. "
-                     "Ripristinalo o rinominalo per ripartire da zero.")
+            log.error("searches.json illeggibile o di forma inattesa: non lo sovrascrivo. "
+                      "Ripristinalo o rinominalo per ripartire da zero.")
             raise SystemExit(1)
         raw = {}
     now = dt.datetime.utcnow().timestamp()
