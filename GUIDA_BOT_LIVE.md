@@ -91,6 +91,8 @@ biglietto che rispetta i criteri.
 
 ## Comandi e pulsanti
 
+Sotto la casella di testo c'è una **tastiera fissa** con le azioni principali (Cerca ora, Nuova ricerca, Le mie ricerche, Pausa/Riprendi; per l'amministratore anche Invita e Utenti). I comandi `/...` compaiono da soli nel menù di Telegram: il bot li registra all'avvio, quindi **non serve impostarli in BotFather** (se l'hai fatto, vengono sostituiti).
+
 - **➕ Nuova ricerca** (o `/aggiungi`): crea una ricerca guidata dai bottoni.
 - **📋 Le mie ricerche** (o `/lista`): vedi e rimuovi le ricerche.
 - **⏸️ Pausa / ▶️ Riprendi** (o `/pausa`, `/riprendi`): ferma/riattiva gli avvisi.

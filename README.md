@@ -43,6 +43,8 @@ indicata da `DATA_DIR` (su Railway è un disco persistente montato su `/data`).
 
 ## Comandi e pulsanti del bot
 
+Sotto la casella di testo c'è una **tastiera fissa** con le azioni principali (Cerca ora, Nuova ricerca, Le mie ricerche, Pausa/Riprendi; per l'amministratore anche Invita e Utenti). I comandi `/...` compaiono da soli nel menù di Telegram: il bot li registra all'avvio, quindi **non serve impostarli in BotFather** (se l'hai fatto, vengono sostituiti).
+
 - **🔎 Cerca ora** (o `/cerca`): consulta i biglietti per una tratta/giorno **senza salvare** la ricerca.
 - **➕ Nuova ricerca** (o `/aggiungi`): crea una ricerca guidata dai bottoni (con avvisi sui nuovi).
 - **📋 Le mie ricerche** (o `/lista`): vedi e rimuovi le ricerche.
@@ -52,6 +54,8 @@ indicata da `DATA_DIR` (su Railway è un disco persistente montato su `/data`).
 - `/aiuto`: menù principale.
 - `/invita` (solo amministratore): genera un codice d'invito monouso valido 24 ore e un link da inoltrare.
 - `/utenti` (solo amministratore): elenca le persone invitate e permette di revocare l'accesso (le loro ricerche vengono cancellate).
+
+Prima di salvare una ricerca il bot mostra un riepilogo da confermare; dopo il salvataggio puoi aggiungere il ritorno con un tocco.
 
 Ogni persona ha le **proprie** ricerche, la propria pausa e riceve solo i propri avvisi.
 Tetto di ricerche attive: 5 per l'amministratore, 3 per ogni invitato (modificabile, vedi sotto).
