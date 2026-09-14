@@ -57,3 +57,52 @@ def test_migrate_seen_prefixes_old_keys_with_owner():
     new = bot.migrate_seen(old, OWNER)
     assert new == {"1000:111": 1.0, "1000:222": 2.0, "42:333": 3.0}
     assert "111" in old  # non modifica l'input
+
+
+# --- Task 3: inviti -----------------------------------------------------------
+
+def test_new_invite_code_shape_and_expiry():
+    store = bot.empty_store()
+    code = bot.new_invite(store, NOW)
+    assert len(code) == 6 and all(c in bot.INVITE_ALPHABET for c in code)
+    assert bot.INVITE_CODE_RE.match(code)
+    inv = store["invites"][code]
+    assert inv["created"] == NOW
+    assert inv["expires"] == NOW + bot.INVITE_TTL_SECONDS
+
+
+def test_redeem_invite_success_is_single_use():
+    store = bot.empty_store()
+    code = bot.new_invite(store, NOW)
+    assert bot.redeem_invite(store, code, "42", "Anna", NOW + 60) is True
+    user = store["users"]["42"]
+    assert user["role"] == "guest" and user["name"] == "Anna"
+    assert user["searches"] == [] and user["paused"] is False
+    assert user["joined"] == NOW + 60
+    assert code not in store["invites"]
+    # seconda volta: rifiutato
+    assert bot.redeem_invite(store, code, "43", "Bruno", NOW + 61) is False
+    assert "43" not in store["users"]
+
+
+def test_redeem_invite_expired_or_unknown():
+    store = bot.empty_store()
+    code = bot.new_invite(store, NOW)
+    late = NOW + bot.INVITE_TTL_SECONDS + 1
+    assert bot.redeem_invite(store, code, "42", "Anna", late) is False
+    assert code not in store["invites"]  # scaduto e ripulito
+    assert bot.redeem_invite(store, "ZZZZZZ", "42", "Anna", NOW) is False
+
+
+def test_redeem_invite_is_case_insensitive():
+    store = bot.empty_store()
+    code = bot.new_invite(store, NOW)
+    assert bot.redeem_invite(store, code.lower(), "42", "Anna", NOW) is True
+
+
+def test_purge_invites_keeps_only_valid():
+    store = bot.empty_store()
+    store["invites"] = {"AAAAAA": {"created": 0, "expires": NOW - 1},
+                        "BBBBBB": {"created": 0, "expires": NOW + 1}}
+    bot.purge_invites(store, NOW)
+    assert list(store["invites"]) == ["BBBBBB"]

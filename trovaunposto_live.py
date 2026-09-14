@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import urllib.parse
 from zoneinfo import ZoneInfo
 
@@ -409,6 +410,40 @@ def save_seen(seen):
     with open(SEEN_PATH, "w", encoding="utf-8") as f:
         json.dump(seen, f, ensure_ascii=False, indent=2)
     return seen
+
+
+# ---------------------------------------------------------------------------
+# Inviti (codici monouso generati dall'admin)
+# ---------------------------------------------------------------------------
+INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # senza 0/O, 1/I
+INVITE_TTL_SECONDS = 24 * 3600
+INVITE_CODE_RE = re.compile(r"^[A-Z2-9]{6}$")
+
+
+def purge_invites(store, now):
+    store["invites"] = {c: v for c, v in store.get("invites", {}).items()
+                        if v.get("expires", 0) > now}
+
+
+def new_invite(store, now):
+    purge_invites(store, now)
+    while True:
+        code = "".join(secrets.choice(INVITE_ALPHABET) for _ in range(6))
+        if code not in store["invites"]:
+            break
+    store["invites"][code] = {"created": now, "expires": now + INVITE_TTL_SECONDS}
+    return code
+
+
+def redeem_invite(store, code, user_id, name, now):
+    """Consuma il codice e registra l'utente come invitato. False se non valido/scaduto."""
+    purge_invites(store, now)
+    code = (code or "").strip().upper()
+    if code not in store["invites"]:
+        return False
+    del store["invites"][code]
+    store["users"][str(user_id)] = new_user(name, "guest", now)
+    return True
 
 
 # ---------------------------------------------------------------------------
