@@ -50,7 +50,7 @@ Sotto la casella di testo c'è una **tastiera fissa** con le azioni principali (
 - **📋 Le mie ricerche** (o `/lista`): vedi e rimuovi le ricerche.
 - **⏸️ Pausa / ▶️ Riprendi** (o `/pausa`, `/riprendi`): ferma/riattiva gli avvisi.
 - `/stato`: stato e numero di ricerche.
-- `/pulisci` (o `/clear`): cancella i messaggi recenti della chat (limite Telegram: ultimi 2 giorni).
+- `/pulisci` (o `/clear`): cancella tutti i messaggi della chat degli ultimi 2 giorni (Telegram non permette ai bot di rimuovere quelli più vecchi: per quelli usa “Cancella chat” dal menù di Telegram).
 - `/aiuto`: menù principale.
 - `/invita` (solo amministratore): genera un codice d'invito monouso valido 24 ore e un link da inoltrare.
 - `/utenti` (solo amministratore): elenca le persone invitate e permette di revocare l'accesso (le loro ricerche vengono cancellate).

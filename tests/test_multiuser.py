@@ -241,3 +241,15 @@ def test_after_search_kb_points_to_savelast():
     assert [b.callback_data for row in kb for b in row] == ["savelast"]
     kb2 = bot.after_add_kb().inline_keyboard
     assert [b.callback_data for row in kb2 for b in row] == ["return"]
+
+
+# --- Pulisci a blocchi --------------------------------------------------------
+
+def test_clear_batches_covers_range_down_to_floor():
+    batches = list(bot.clear_batches(250, 0))
+    assert [len(b) for b in batches] == [100, 100, 50]
+    assert batches[0][0] == 250 and batches[0][-1] == 151
+    assert batches[-1][-1] == 1
+    assert list(bot.clear_batches(250, 200)) == [list(range(250, 200, -1))]
+    assert list(bot.clear_batches(5, 5)) == []
+    assert list(bot.clear_batches(5, 9)) == []

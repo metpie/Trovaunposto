@@ -796,25 +796,54 @@ async def _delete_later(context: ContextTypes.DEFAULT_TYPE):
         pass
 
 
+def clear_batches(last_id, floor, size=100):
+    """Blocchi di id messaggio da cancellare, dal più recente (last_id) fino a floor escluso."""
+    floor = max(int(floor or 0), 0)
+    cur = int(last_id)
+    while cur > floor:
+        lo = max(cur - size, floor)
+        yield list(range(cur, lo, -1))
+        cur = lo
+
+
 async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if get_user(update, context.application.bot_data["store"]) is None:
+    store = context.application.bot_data["store"]
+    user = get_user(update, store)
+    if user is None:
         return
     chat_id = update.effective_chat.id
     last_id = update.effective_message.message_id
-    deleted = 0
-    # Telegram consente ai bot di cancellare i messaggi di una chat privata
-    # inviati negli ultimi 2 giorni: proviamo a rimuovere quelli recenti.
-    for mid in range(last_id, max(last_id - 100, 0), -1):
+    # Telegram consente ai bot di cancellare solo i messaggi degli ultimi 2 giorni.
+    # Cancelliamo a blocchi di 100 tutto ciò che è cancellabile, partendo dal
+    # messaggio corrente e scendendo fino al punto dove si è fermata l'ultima
+    # pulizia: ciò che stava sotto era già stato tolto (o era già troppo vecchio).
+    floor = user.get("clear_floor", 0)
+    for ids in clear_batches(last_id, floor):
         try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=mid)
-            deleted += 1
-        except Exception:
-            pass
+            await context.bot.delete_messages(chat_id=chat_id, message_ids=ids)
+        except Exception as e:  # noqa: BLE001
+            # Il blocco contiene messaggi non cancellabili (troppo vecchi): provo uno a uno.
+            # Se nessuno si cancella, tutto ciò che sta sotto è ancora più vecchio: fine.
+            log.debug("delete_messages %s..%s: %s", ids[0], ids[-1], e)
+            ok = 0
+            for mid in ids:
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=mid)
+                    ok += 1
+                except Exception:  # noqa: BLE001
+                    pass
+            if ok == 0:
+                break
+        await asyncio.sleep(0.2)
+    user["clear_floor"] = last_id
+    save_store(store)
     msg = await context.bot.send_message(
-        chat_id=chat_id, text=f"🧹 Pulizia completata ({deleted} messaggi recenti rimossi)."
-    )
+        chat_id=chat_id,
+        text="🧹 Fatto: ho cancellato i messaggi degli ultimi 2 giorni.\n"
+             "Telegram non permette ai bot di rimuovere quelli più vecchi: per quelli usa "
+             "“Cancella chat” dal menù di Telegram.")
     context.job_queue.run_once(
-        _delete_later, 6, data={"chat_id": chat_id, "message_id": msg.message_id}
+        _delete_later, 10, data={"chat_id": chat_id, "message_id": msg.message_id}
     )
 
 
