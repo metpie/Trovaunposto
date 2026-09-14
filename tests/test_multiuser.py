@@ -234,3 +234,10 @@ def test_draft_search_and_confirm_text():
     assert s["name"] == "Roma → Milano" and s["max_price"] == 50
     t = bot.confirm_text(s)
     assert "Riepilogo" in t and "Confermi?" in t and "01/10/2026" in t and "max 50€" in t
+
+
+def test_after_search_kb_points_to_savelast():
+    kb = bot.after_search_kb().inline_keyboard
+    assert [b.callback_data for row in kb for b in row] == ["savelast"]
+    kb2 = bot.after_add_kb().inline_keyboard
+    assert [b.callback_data for row in kb2 for b in row] == ["return"]

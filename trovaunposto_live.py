@@ -1034,12 +1034,11 @@ def confirm_kb():
 def after_add_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔁 Aggiungi anche il ritorno", callback_data="return")],
-        [InlineKeyboardButton("📋 Le mie ricerche", callback_data="list")],
     ])
 
 
 def after_search_kb():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("➕ Salva come ricerca", callback_data="new")]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("➕ Salva come ricerca", callback_data="savelast")]])
 
 
 def draft_search(d):
@@ -1101,6 +1100,27 @@ async def wiz_return(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔁 <b>Ritorno: {esc(d['dep'].title())} → {esc(d['arr'].title())}</b>\nChe giorno?",
         parse_mode=ParseMode.HTML, reply_markup=days_kb())
     return ASK_DAY
+
+
+async def wiz_save_last(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bottone 'Salva come ricerca' dopo Cerca ora: riusa i criteri appena cercati e va al riepilogo."""
+    q = update.callback_query
+    await q.answer()
+    store = context.application.bot_data["store"]
+    user = get_user(update, store)
+    if user is None:
+        return ConversationHandler.END
+    d = context.user_data.get("last_draft")
+    if not d:
+        await q.message.reply_text("Ricomincia da ➕ Nuova ricerca.")
+        return ConversationHandler.END
+    if await _reject_if_over_limit(update, user):
+        return ConversationHandler.END
+    context.user_data["mode"] = "add"
+    context.user_data["draft"] = dict(d)
+    await q.message.reply_text(confirm_text(draft_search(d)), parse_mode=ParseMode.HTML,
+                               reply_markup=confirm_kb())
+    return ASK_CONFIRM
 
 
 async def wiz_start_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1308,12 +1328,13 @@ async def _finish(update, context, send):
 
     if mode == "search":
         # Sola consultazione: NON salva la ricerca e non registra nulla.
+        context.user_data["last_draft"] = dict(d)
         try:
             matches = await asyncio.to_thread(lambda: find_matches(search))
             await send(render_matches(search, matches))
-            await send("ℹ️ Solo consultazione: questa ricerca non è stata salvata.", reply_markup=after_search_kb())
         except Exception:
             await send("Non sono riuscito a leggere i biglietti ora; riprova tra poco.")
+        await send("ℹ️ Solo consultazione: questa ricerca non è stata salvata.", reply_markup=after_search_kb())
         context.user_data.pop("draft", None)
         context.user_data.pop("mode", None)
         return ConversationHandler.END
@@ -1392,11 +1413,20 @@ async def wiz_confirm_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
                              lambda t, **kw: q.message.reply_text(
                                  t, parse_mode=ParseMode.HTML, disable_web_page_preview=True, **kw))
     if val == "restart":
+        try:
+            await q.edit_message_reply_markup(None)
+        except Exception:  # noqa: BLE001
+            pass
         return await wiz_start(update, context)
     context.user_data.pop("draft", None)
     context.user_data.pop("mode", None)
     await q.edit_message_text("Operazione annullata.")
     return ConversationHandler.END
+
+
+async def wiz_confirm_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Usa i bottoni qui sopra: ✅ Conferma, 🔁 Ricomincia o ❌ Annulla.")
+    return ASK_CONFIRM
 
 
 async def wiz_menu_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1543,6 +1573,7 @@ def build_application():
             CallbackQueryHandler(wiz_start_add, pattern=r"^new$"),
             CallbackQueryHandler(wiz_start_search, pattern=r"^find$"),
             CallbackQueryHandler(wiz_return, pattern=r"^return$"),
+            CallbackQueryHandler(wiz_save_last, pattern=r"^savelast$"),
             MessageHandler(filters.Text([BTN_NEW]), wiz_start_add),
             MessageHandler(filters.Text([BTN_FIND]), wiz_start_search),
         ],
@@ -1557,7 +1588,8 @@ def build_application():
                        MessageHandler(WIZ_TEXT, wiz_time_txt)],
             ASK_PRICE: [CallbackQueryHandler(wiz_price_btn, pattern=r"^price\|"),
                         MessageHandler(WIZ_TEXT, wiz_price_txt)],
-            ASK_CONFIRM: [CallbackQueryHandler(wiz_confirm_btn, pattern=r"^confirm\|")],
+            ASK_CONFIRM: [CallbackQueryHandler(wiz_confirm_btn, pattern=r"^confirm\|"),
+                          MessageHandler(WIZ_TEXT, wiz_confirm_txt)],
         },
         fallbacks=[CommandHandler("annulla", wiz_cancel), MessageHandler(MENU_FILTER, wiz_menu_fallback)],
         allow_reentry=True,
