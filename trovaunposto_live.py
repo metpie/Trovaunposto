@@ -469,9 +469,38 @@ def revoke_user(store, seen, user_id):
 # ---------------------------------------------------------------------------
 # Helpers Telegram
 # ---------------------------------------------------------------------------
-def is_owner(update: Update) -> bool:
+PRIVATE_MSG = "Questo bot è privato. Se hai un codice d'invito scrivilo qui."
+INVALID_CODE_MSG = "Codice non valido o scaduto."
+
+
+def limit_msg(n):
+    return (f"Hai raggiunto il massimo di {n} ricerche attive. "
+            "Rimuovine una da 📋 <b>Le mie ricerche</b>.")
+
+
+def get_user(update: Update, store):
+    """Record dell'utente che scrive, o None se non autorizzato.
+    L'admin (OWNER) è sempre autorizzato; il nome viene aggiornato se cambia."""
     u = update.effective_user
-    return u is not None and str(u.id) == str(OWNER)
+    if u is None:
+        return None
+    uid = str(u.id)
+    name = u.full_name or u.username or uid
+    changed = False
+    if uid == str(OWNER):
+        if uid not in store["users"]:
+            changed = True
+        user = ensure_admin(store, OWNER, name)
+    else:
+        user = store["users"].get(uid)
+        if user is None:
+            return None
+    if name and user.get("name") != name:
+        user["name"] = name
+        changed = True
+    if changed:
+        save_store(store)
+    return user
 
 
 def esc(s):
@@ -524,25 +553,64 @@ ASK_DEP, ASK_ARR, ASK_DAY, ASK_TIME, ASK_PRICE = range(5)
 # ---------------------------------------------------------------------------
 # Comandi base
 # ---------------------------------------------------------------------------
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update):
-        return
+async def _handle_invite_code(update, context, code):
+    """Prova a riscattare un codice per un utente NON autorizzato. Risponde sempre."""
     store = context.application.bot_data["store"]
+    u = update.effective_user
+    name = u.full_name or u.username or str(u.id)
+    now = dt.datetime.utcnow().timestamp()
+    if not redeem_invite(store, code, u.id, name, now):
+        await update.effective_message.reply_text(INVALID_CODE_MSG)
+        return False
+    save_store(store)
     await update.effective_message.reply_text(
-        WELCOME, parse_mode=ParseMode.HTML, reply_markup=main_menu_kb(store["paused"])
+        WELCOME, parse_mode=ParseMode.HTML, reply_markup=main_menu_kb(False))
+    try:
+        await context.bot.send_message(
+            chat_id=OWNER, parse_mode=ParseMode.HTML,
+            text=f"👤 <b>{esc(name)}</b> è entrato con il codice <code>{esc(code.upper())}</code>.")
+    except Exception as e:  # noqa: BLE001
+        log.warning("avviso admin fallito: %s", e)
+    return True
+
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    store = context.application.bot_data["store"]
+    user = get_user(update, store)
+    if user is None:
+        code = (context.args[0] if context.args else "").strip().upper()
+        if code:
+            await _handle_invite_code(update, context, code)
+        else:
+            await update.effective_message.reply_text(PRIVATE_MSG)
+        return
+    await update.effective_message.reply_text(
+        WELCOME, parse_mode=ParseMode.HTML, reply_markup=main_menu_kb(user["paused"])
     )
+
+
+async def on_unauthorized_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gruppo 1: agisce solo per chi NON è autorizzato (codice d'invito o messaggio 'privato')."""
+    store = context.application.bot_data["store"]
+    if get_user(update, store) is not None:
+        return
+    text = (update.message.text or "").strip().upper()
+    if INVITE_CODE_RE.match(text):
+        await _handle_invite_code(update, context, text)
+    else:
+        await update.effective_message.reply_text(PRIVATE_MSG)
 
 
 async def show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
     store = context.application.bot_data["store"]
-    searches = store["searches"]
+    user = get_user(update, store)
+    searches = user["searches"]
     if not searches:
         text = "Non hai ancora ricerche attive.\nPremi ➕ <b>Nuova ricerca</b> per crearne una."
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("➕ Nuova ricerca", callback_data="new")]])
     else:
-        text = "📋 <b>Le tue ricerche attive:</b>\n\n" + "\n".join(
-            f"{i+1}. {esc(search_summary(s))}" for i, s in enumerate(searches)
-        )
+        text = (f"📋 <b>Le tue ricerche attive</b> ({len(searches)}/{search_limit(user)}):\n\n"
+                + "\n".join(f"{i+1}. {esc(search_summary(s))}" for i, s in enumerate(searches)))
         rows = []
         for i in range(len(searches)):
             rows.append([
@@ -558,39 +626,44 @@ async def show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=Fal
 
 
 async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update):
+    if get_user(update, context.application.bot_data["store"]) is None:
         return
     await show_list(update, context)
 
 
 async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update):
-        return
     store = context.application.bot_data["store"]
-    store["paused"] = True
+    user = get_user(update, store)
+    if user is None:
+        return
+    user["paused"] = True
     save_store(store)
     await update.effective_message.reply_text("⏸️ Notifiche sospese. Usa /riprendi per riattivarle.")
 
 
 async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update):
-        return
     store = context.application.bot_data["store"]
-    store["paused"] = False
+    user = get_user(update, store)
+    if user is None:
+        return
+    user["paused"] = False
     save_store(store)
     await update.effective_message.reply_text("▶️ Notifiche riattivate.")
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update):
-        return
     store = context.application.bot_data["store"]
-    stato = "in pausa ⏸️" if store["paused"] else "attivo ✅"
-    await update.effective_message.reply_text(
-        f"Stato: <b>{stato}</b>\nRicerche attive: {len(store['searches'])}\n"
-        f"Controllo ogni {CHECK_INTERVAL}s.",
-        parse_mode=ParseMode.HTML,
-    )
+    user = get_user(update, store)
+    if user is None:
+        return
+    stato = "in pausa ⏸️" if user["paused"] else "attivo ✅"
+    lines = [f"Stato: <b>{stato}</b>",
+             f"Ricerche attive: {len(user['searches'])}/{search_limit(user)}",
+             f"Controllo ogni {CHECK_INTERVAL}s."]
+    if is_admin(user):
+        total = sum(len(u["searches"]) for u in store["users"].values())
+        lines.append(f"Utenti: {len(store['users'])} · Ricerche totali: {total}")
+    await update.effective_message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 async def _delete_later(context: ContextTypes.DEFAULT_TYPE):
@@ -602,7 +675,7 @@ async def _delete_later(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update):
+    if get_user(update, context.application.bot_data["store"]) is None:
         return
     chat_id = update.effective_chat.id
     last_id = update.message.message_id
@@ -625,7 +698,7 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Diagnostica temporanea: prova Milano→Roma dal server e riporta cosa riceve."""
-    if not is_owner(update):
+    if not is_admin(get_user(update, context.application.bot_data["store"])):
         return
     url = ("https://trovaunposto.it/trains/searchTrainTicket?"
            "departure=MILANO%28TUTTE+LE+STAZIONI%29&departure_id=MILANO%28TUTTE+LE+STAZIONI%29&"
@@ -658,33 +731,34 @@ async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Callback dei pulsanti del menu (fuori dal wizard)
 # ---------------------------------------------------------------------------
 async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update):
-        return
     q = update.callback_query
     await q.answer()
-    data = q.data
     store = context.application.bot_data["store"]
+    user = get_user(update, store)
+    if user is None:
+        return
+    data = q.data
     if data == "list":
         await show_list(update, context, edit=True)
     elif data == "pause":
-        store["paused"] = True
+        user["paused"] = True
         save_store(store)
         await q.edit_message_text("⏸️ Notifiche sospese.", reply_markup=main_menu_kb(True))
     elif data == "resume":
-        store["paused"] = False
+        user["paused"] = False
         save_store(store)
         await q.edit_message_text("▶️ Notifiche riattivate.", reply_markup=main_menu_kb(False))
     elif data.startswith("del:"):
         idx = int(data.split(":")[1])
-        if 0 <= idx < len(store["searches"]):
-            removed = store["searches"].pop(idx)
+        if 0 <= idx < len(user["searches"]):
+            removed = user["searches"].pop(idx)
             save_store(store)
             await q.edit_message_text(f"🗑 Rimossa: {esc(search_summary(removed))}")
         await show_list(update, context)
     elif data.startswith("avail:"):
         idx = int(data.split(":")[1])
-        if 0 <= idx < len(store["searches"]):
-            search = store["searches"][idx]
+        if 0 <= idx < len(user["searches"]):
+            search = user["searches"][idx]
             await q.message.reply_text("🔎 Controllo i biglietti disponibili ora…")
             try:
                 matches = await asyncio.to_thread(lambda s=search: find_matches(s))
@@ -757,6 +831,20 @@ def price_kb():
 
 
 async def wiz_start_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    store = context.application.bot_data["store"]
+    user = get_user(update, store)
+    if user is None:
+        if update.callback_query:
+            await update.callback_query.answer()
+        return ConversationHandler.END
+    limit = search_limit(user)
+    if len(user["searches"]) >= limit:
+        if update.callback_query:
+            await update.callback_query.answer()
+            await update.callback_query.message.reply_text(limit_msg(limit), parse_mode=ParseMode.HTML)
+        else:
+            await update.effective_message.reply_text(limit_msg(limit), parse_mode=ParseMode.HTML)
+        return ConversationHandler.END
     context.user_data["mode"] = "add"
     return await wiz_start(update, context)
 
@@ -767,7 +855,9 @@ async def wiz_start_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def wiz_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update):
+    if get_user(update, context.application.bot_data["store"]) is None:
+        if update.callback_query:
+            await update.callback_query.answer()
         return ConversationHandler.END
     context.user_data["draft"] = {}
     text = "🚆 <b>Da dove parti?</b>\nScegli una città o scrivine un'altra."
@@ -970,9 +1060,17 @@ async def _finish(update, context, send):
         context.user_data.pop("mode", None)
         return ConversationHandler.END
 
-    # mode == "add": salva la ricerca e attiva gli avvisi.
+    # mode == "add": salva la ricerca dell'utente e attiva gli avvisi.
     store = context.application.bot_data["store"]
-    store["searches"].append(search)
+    user = get_user(update, store)
+    uid = str(update.effective_user.id)
+    limit = search_limit(user)
+    if len(user["searches"]) >= limit:
+        await send(limit_msg(limit))
+        context.user_data.pop("draft", None)
+        context.user_data.pop("mode", None)
+        return ConversationHandler.END
+    user["searches"].append(search)
     save_store(store)
     await send(f"✅ <b>Ricerca creata!</b>\n{esc(search_summary(search))}")
     # mostra i biglietti già disponibili ora e li registra (senza riavvisare)
@@ -981,7 +1079,7 @@ async def _finish(update, context, send):
         matches = await asyncio.to_thread(lambda: find_matches(search))
         now = dt.datetime.utcnow().timestamp()
         for card, _m in matches:
-            seen[card["id"]] = now
+            seen[seen_key(uid, card["id"])] = now
         context.application.bot_data["seen"] = save_seen(seen)
         await send(render_matches(search, matches))
         if matches:
@@ -1148,6 +1246,7 @@ def build_application():
     app.add_handler(CommandHandler(["pulisci", "clear"], cmd_clear))
     app.add_handler(CommandHandler("debug", cmd_debug))
     app.add_handler(CallbackQueryHandler(on_menu, pattern=r"^(list|pause|resume|del:\d+|avail:\d+)$"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_unauthorized_text), group=1)
 
     app.job_queue.run_repeating(check_job, interval=CHECK_INTERVAL, first=10)
     return app
