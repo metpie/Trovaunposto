@@ -321,11 +321,58 @@ def _load(path, default):
         return default
 
 
+STORE_VERSION = 2
+
+
+def empty_store():
+    return {"version": STORE_VERSION, "users": {}, "invites": {}}
+
+
+def new_user(name, role, now):
+    return {"name": name or "", "role": role, "searches": [], "paused": False, "joined": now}
+
+
+def migrate_store(old, owner_id, now):
+    """Converte l'archivio al formato per utente (versione 2). Pura: non tocca `old`.
+    Formato 1: {"searches": [...], "paused": bool} -> tutto sotto l'admin."""
+    if old.get("version") == STORE_VERSION and isinstance(old.get("users"), dict):
+        new = json.loads(json.dumps(old))
+        new.setdefault("invites", {})
+        for u in new["users"].values():
+            u.setdefault("searches", [])
+            u.setdefault("paused", False)
+            u.setdefault("name", "")
+            u.setdefault("role", "guest")
+            u.setdefault("joined", now)
+        return new
+    new = empty_store()
+    if "searches" in old or "paused" in old:
+        admin = new_user("", "admin", now)
+        admin["searches"] = json.loads(json.dumps(old.get("searches", [])))
+        admin["paused"] = bool(old.get("paused", False))
+        new["users"][str(owner_id)] = admin
+    return new
+
+
+def ensure_admin(store, owner_id, name="", now=None):
+    """Ritorna il record dell'admin, creandolo se manca. Non cambia un nome già presente."""
+    uid = str(owner_id)
+    user = store["users"].get(uid)
+    if user is None:
+        user = new_user(name, "admin", now if now is not None else dt.datetime.utcnow().timestamp())
+        store["users"][uid] = user
+    user["role"] = "admin"
+    return user
+
+
 def load_store():
     os.makedirs(DATA_DIR, exist_ok=True)
-    store = _load(SEARCHES_PATH, {"searches": [], "paused": False})
-    store.setdefault("searches", [])
-    store.setdefault("paused", False)
+    raw = _load(SEARCHES_PATH, {})
+    now = dt.datetime.utcnow().timestamp()
+    store = migrate_store(raw, OWNER, now)
+    ensure_admin(store, OWNER, now=now)
+    if store != raw:
+        save_store(store)
     return store
 
 
