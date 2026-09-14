@@ -693,7 +693,10 @@ async def on_unauthorized_text(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def on_stale_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Bottone di un messaggio vecchio (es. dopo un riavvio): rispondi invece di lasciarlo girare."""
+    """Bottone di un passo del wizard premuto quando nessun wizard è attivo (es. dopo un
+    riavvio): rispondi invece di lasciarlo girare. Se un wizard è attivo ci pensa lui."""
+    if "draft" in context.user_data:
+        return
     try:
         await update.callback_query.answer(
             "Questo bottone non è più attivo: ricomincia dalla tastiera qui sotto.", show_alert=True)
@@ -1637,7 +1640,8 @@ def build_application():
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.Regex(r"^/start\b") & filters.ChatType.PRIVATE,
         on_unauthorized_text), group=1)
-    app.add_handler(CallbackQueryHandler(on_stale_callback), group=2)
+    app.add_handler(CallbackQueryHandler(
+        on_stale_callback, pattern=r"^(city|day|time|price|confirm)\|"), group=2)
 
     app.job_queue.run_repeating(check_job, interval=CHECK_INTERVAL, first=10)
     return app
