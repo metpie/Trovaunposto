@@ -31,7 +31,14 @@ from zoneinfo import ZoneInfo
 
 import requests
 from bs4 import BeautifulSoup
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    BotCommand,
+    BotCommandScopeChat,
+    BotCommandScopeDefault,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+)
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
@@ -572,6 +579,41 @@ WELCOME = (
     "Usa i pulsanti qui sotto: <b>Nuova ricerca</b> ti guida passo passo, "
     "senza dover scrivere date o orari a mano."
 )
+
+# Comandi mostrati nel menù di Telegram (registrati all'avvio, per ruolo).
+COMMANDS_BASE = [
+    ("cerca", "Guarda i biglietti disponibili ora"),
+    ("aggiungi", "Nuova ricerca con avvisi"),
+    ("lista", "Le mie ricerche"),
+    ("pausa", "Sospendi gli avvisi"),
+    ("riprendi", "Riattiva gli avvisi"),
+    ("stato", "Stato del bot"),
+    ("aiuto", "Menù principale"),
+]
+COMMANDS_ADMIN = [
+    ("invita", "Crea un codice d'invito"),
+    ("utenti", "Gestisci gli invitati"),
+    ("pulisci", "Cancella i messaggi recenti"),
+]
+
+
+def commands_for(role):
+    return COMMANDS_BASE + (COMMANDS_ADMIN if role == "admin" else [])
+
+
+async def register_commands(bot):
+    """Registra l'elenco comandi su Telegram: base per tutti, esteso per l'admin.
+    Sovrascrive quanto impostato a mano in BotFather."""
+    try:
+        await bot.set_my_commands(
+            [BotCommand(c, d) for c, d in commands_for("guest")],
+            scope=BotCommandScopeDefault())
+        await bot.set_my_commands(
+            [BotCommand(c, d) for c, d in commands_for("admin")],
+            scope=BotCommandScopeChat(chat_id=int(OWNER)))
+    except Exception as e:  # noqa: BLE001
+        log.warning("registrazione comandi fallita: %s", e)
+
 
 # Stati del wizard
 ASK_DEP, ASK_ARR, ASK_DAY, ASK_TIME, ASK_PRICE = range(5)
@@ -1319,6 +1361,7 @@ async def on_startup(app: Application):
     app.bot_data["store"] = load_store()
     app.bot_data["seen"] = load_seen()
     store = app.bot_data["store"]
+    await register_commands(app.bot)
     all_searches = list(iter_searches(store, only_active=False))
     # primo avvio "pulito": se non ho memoria, registro i biglietti attuali in
     # silenzio così non parte una valanga di notifiche al primo giro.

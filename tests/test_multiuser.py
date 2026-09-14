@@ -187,3 +187,16 @@ def test_save_seen_prunes_in_place_and_returns_same_object(tmp_path, monkeypatch
     out = bot.save_seen(seen)
     assert out is seen
     assert list(seen) == ["1000:2"]
+
+
+# --- Comandi registrati -------------------------------------------------------
+
+def test_commands_for_roles():
+    guest = [c for c, _ in bot.commands_for("guest")]
+    admin = [c for c, _ in bot.commands_for("admin")]
+    assert guest == ["cerca", "aggiungi", "lista", "pausa", "riprendi", "stato", "aiuto"]
+    assert admin[:len(guest)] == guest
+    assert set(admin) - set(guest) == {"invita", "utenti", "pulisci"}
+    assert len(set(admin)) == len(admin)
+    assert "debug" not in admin
+    assert all(0 < len(d) <= 40 for _, d in bot.commands_for("admin"))
