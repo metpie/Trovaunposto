@@ -37,6 +37,8 @@ from telegram import (
     BotCommandScopeDefault,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
     Update,
 )
 from telegram.constants import ParseMode
@@ -562,15 +564,27 @@ def notify_text(search, card, match):
     return "\n".join(lines)
 
 
-def main_menu_kb(paused):
-    rows = [
-        [InlineKeyboardButton("🔎 Cerca ora (senza salvare)", callback_data="find")],
-        [InlineKeyboardButton("➕ Nuova ricerca", callback_data="new")],
-        [InlineKeyboardButton("📋 Le mie ricerche", callback_data="list")],
-        [InlineKeyboardButton("▶️ Riprendi" if paused else "⏸️ Pausa",
-                               callback_data="resume" if paused else "pause")],
-    ]
-    return InlineKeyboardMarkup(rows)
+BTN_FIND = "🔎 Cerca ora"
+BTN_NEW = "➕ Nuova ricerca"
+BTN_LIST = "📋 Le mie ricerche"
+BTN_PAUSE = "⏸️ Pausa"
+BTN_RESUME = "▶️ Riprendi"
+BTN_INVITE = "🔗 Invita"
+BTN_USERS = "👥 Utenti"
+MENU_LABELS = [BTN_FIND, BTN_NEW, BTN_LIST, BTN_PAUSE, BTN_RESUME, BTN_INVITE, BTN_USERS]
+
+
+def main_kb_rows(user):
+    rows = [[BTN_FIND, BTN_NEW],
+            [BTN_LIST, BTN_RESUME if user.get("paused") else BTN_PAUSE]]
+    if is_admin(user):
+        rows.append([BTN_INVITE, BTN_USERS])
+    return rows
+
+
+def main_kb(user):
+    """Tastiera fissa sotto la casella di testo (sostituisce il vecchio menù inline)."""
+    return ReplyKeyboardMarkup(main_kb_rows(user), resize_keyboard=True, is_persistent=True)
 
 
 WELCOME = (
@@ -631,11 +645,12 @@ async def _handle_invite_code(update, context, code):
     name = u.full_name or u.username or str(u.id)
     now = dt.datetime.utcnow().timestamp()
     if not redeem_invite(store, code, u.id, name, now):
-        await update.effective_message.reply_text(INVALID_CODE_MSG)
+        await update.effective_message.reply_text(INVALID_CODE_MSG, reply_markup=ReplyKeyboardRemove())
         return False
     save_store(store)
+    new_user_rec = store["users"][str(u.id)]
     await update.effective_message.reply_text(
-        WELCOME, parse_mode=ParseMode.HTML, reply_markup=main_menu_kb(False))
+        WELCOME, parse_mode=ParseMode.HTML, reply_markup=main_kb(new_user_rec))
     try:
         await context.bot.send_message(
             chat_id=OWNER, parse_mode=ParseMode.HTML,
@@ -653,10 +668,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if code:
             await _handle_invite_code(update, context, code)
         else:
-            await update.effective_message.reply_text(PRIVATE_MSG)
+            await update.effective_message.reply_text(PRIVATE_MSG, reply_markup=ReplyKeyboardRemove())
         return
     await update.effective_message.reply_text(
-        WELCOME, parse_mode=ParseMode.HTML, reply_markup=main_menu_kb(user["paused"])
+        WELCOME, parse_mode=ParseMode.HTML, reply_markup=main_kb(user)
     )
 
 
@@ -669,7 +684,26 @@ async def on_unauthorized_text(update: Update, context: ContextTypes.DEFAULT_TYP
     if INVITE_CODE_RE.match(text):
         await _handle_invite_code(update, context, text)
     else:
-        await update.effective_message.reply_text(PRIVATE_MSG)
+        await update.effective_message.reply_text(PRIVATE_MSG, reply_markup=ReplyKeyboardRemove())
+
+
+async def on_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bottoni della tastiera fissa (fuori dal wizard). Cerca/Nuova sono entry point del wizard."""
+    store = context.application.bot_data["store"]
+    user = get_user(update, store)
+    if user is None:
+        return  # ci pensa on_unauthorized_text (gruppo 1)
+    text = update.effective_message.text
+    if text == BTN_LIST:
+        await show_list(update, context, user)
+    elif text == BTN_PAUSE:
+        await cmd_pause(update, context)
+    elif text == BTN_RESUME:
+        await cmd_resume(update, context)
+    elif text == BTN_INVITE:
+        await cmd_invite(update, context)
+    elif text == BTN_USERS:
+        await cmd_users(update, context)
 
 
 async def show_list(update: Update, context: ContextTypes.DEFAULT_TYPE, user, edit=False):
@@ -708,7 +742,8 @@ async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user["paused"] = True
     save_store(store)
-    await update.effective_message.reply_text("⏸️ Notifiche sospese. Usa /riprendi per riattivarle.")
+    await update.effective_message.reply_text(
+        "⏸️ Notifiche sospese. Usa ▶️ Riprendi per riattivarle.", reply_markup=main_kb(user))
 
 
 async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -718,7 +753,7 @@ async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user["paused"] = False
     save_store(store)
-    await update.effective_message.reply_text("▶️ Notifiche riattivate.")
+    await update.effective_message.reply_text("▶️ Notifiche riattivate.", reply_markup=main_kb(user))
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -852,11 +887,11 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "pause":
         user["paused"] = True
         save_store(store)
-        await q.edit_message_text("⏸️ Notifiche sospese.", reply_markup=main_menu_kb(True))
+        await q.message.reply_text("⏸️ Notifiche sospese.", reply_markup=main_kb(user))
     elif data == "resume":
         user["paused"] = False
         save_store(store)
-        await q.edit_message_text("▶️ Notifiche riattivate.", reply_markup=main_menu_kb(False))
+        await q.message.reply_text("▶️ Notifiche riattivate.", reply_markup=main_kb(user))
     elif data.startswith("del:"):
         idx = int(data.split(":")[1])
         if 0 <= idx < len(user["searches"]):
@@ -907,7 +942,9 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_store(store)
         context.application.bot_data["seen"] = save_seen(seen)
         try:
-            await context.bot.send_message(chat_id=uid, text="Il tuo accesso al bot è stato revocato.")
+            await context.bot.send_message(
+                chat_id=uid, text="Il tuo accesso al bot è stato revocato.",
+                reply_markup=ReplyKeyboardRemove())
         except Exception as e:  # noqa: BLE001
             log.warning("avviso revoca fallito: %s", e)
         text, kb = users_view(store)
@@ -1263,6 +1300,14 @@ async def wiz_price_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                          lambda t: update.message.reply_text(t, parse_mode=ParseMode.HTML, disable_web_page_preview=True))
 
 
+async def wiz_menu_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Un bottone del menù premuto durante il wizard: annulla il wizard ed esegue l'azione."""
+    context.user_data.pop("draft", None)
+    context.user_data.pop("mode", None)
+    await on_menu_text(update, context)
+    return ConversationHandler.END
+
+
 async def wiz_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("draft", None)
     await update.effective_message.reply_text("Operazione annullata.")
@@ -1381,7 +1426,7 @@ async def on_startup(app: Application):
     try:
         admin = ensure_admin(store, OWNER)
         await app.bot.send_message(chat_id=OWNER, text=WELCOME, parse_mode=ParseMode.HTML,
-                                   reply_markup=main_menu_kb(admin["paused"]))
+                                   reply_markup=main_kb(admin))
     except Exception as e:  # noqa: BLE001
         log.warning("Impossibile inviare il messaggio di avvio: %s", e)
 
@@ -1391,30 +1436,37 @@ def build_application():
         raise SystemExit("Imposta le variabili TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID.")
     app = Application.builder().token(TOKEN).post_init(on_startup).build()
 
+    MENU_FILTER = filters.Text(MENU_LABELS)
+    WIZ_TEXT = filters.TEXT & ~filters.COMMAND & ~MENU_FILTER
+
     wizard = ConversationHandler(
         entry_points=[
             CommandHandler("aggiungi", wiz_start_add),
             CommandHandler("cerca", wiz_start_search),
             CallbackQueryHandler(wiz_start_add, pattern=r"^new$"),
             CallbackQueryHandler(wiz_start_search, pattern=r"^find$"),
+            MessageHandler(filters.Text([BTN_NEW]), wiz_start_add),
+            MessageHandler(filters.Text([BTN_FIND]), wiz_start_search),
         ],
         states={
             ASK_DEP: [CallbackQueryHandler(wiz_dep_btn, pattern=r"^city\|"),
-                      MessageHandler(filters.TEXT & ~filters.COMMAND, wiz_dep_txt)],
+                      MessageHandler(WIZ_TEXT, wiz_dep_txt)],
             ASK_ARR: [CallbackQueryHandler(wiz_arr_btn, pattern=r"^city\|"),
-                      MessageHandler(filters.TEXT & ~filters.COMMAND, wiz_arr_txt)],
+                      MessageHandler(WIZ_TEXT, wiz_arr_txt)],
             ASK_DAY: [CallbackQueryHandler(wiz_day_btn, pattern=r"^day\|"),
-                      MessageHandler(filters.TEXT & ~filters.COMMAND, wiz_day_txt)],
+                      MessageHandler(WIZ_TEXT, wiz_day_txt)],
             ASK_TIME: [CallbackQueryHandler(wiz_time_btn, pattern=r"^time\|"),
-                       MessageHandler(filters.TEXT & ~filters.COMMAND, wiz_time_txt)],
+                       MessageHandler(WIZ_TEXT, wiz_time_txt)],
             ASK_PRICE: [CallbackQueryHandler(wiz_price_btn, pattern=r"^price\|"),
-                        MessageHandler(filters.TEXT & ~filters.COMMAND, wiz_price_txt)],
+                        MessageHandler(WIZ_TEXT, wiz_price_txt)],
         },
-        fallbacks=[CommandHandler("annulla", wiz_cancel)],
+        fallbacks=[CommandHandler("annulla", wiz_cancel), MessageHandler(MENU_FILTER, wiz_menu_fallback)],
         allow_reentry=True,
     )
 
     app.add_handler(wizard)
+    app.add_handler(MessageHandler(
+        filters.Text([BTN_LIST, BTN_PAUSE, BTN_RESUME, BTN_INVITE, BTN_USERS]), on_menu_text))
     app.add_handler(CommandHandler(["start", "aiuto", "help"], cmd_start))
     app.add_handler(CommandHandler(["lista", "ricerche"], cmd_list))
     app.add_handler(CommandHandler("pausa", cmd_pause))

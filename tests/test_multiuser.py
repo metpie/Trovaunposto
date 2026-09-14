@@ -199,4 +199,23 @@ def test_commands_for_roles():
     assert set(admin) - set(guest) == {"invita", "utenti", "pulisci"}
     assert len(set(admin)) == len(admin)
     assert "debug" not in admin
+
+
+# --- Tastiera fissa ------------------------------------------------------------
+
+def test_menu_labels_unique_and_complete():
+    labels = [bot.BTN_FIND, bot.BTN_NEW, bot.BTN_LIST, bot.BTN_PAUSE,
+              bot.BTN_RESUME, bot.BTN_INVITE, bot.BTN_USERS]
+    assert bot.MENU_LABELS == labels
+    assert len(set(labels)) == len(labels)
+
+
+def test_main_kb_rows_guest_and_admin():
+    guest = bot.new_user("Anna", "guest", NOW)
+    assert bot.main_kb_rows(guest) == [[bot.BTN_FIND, bot.BTN_NEW], [bot.BTN_LIST, bot.BTN_PAUSE]]
+    guest["paused"] = True
+    assert bot.main_kb_rows(guest)[1] == [bot.BTN_LIST, bot.BTN_RESUME]
+    admin = bot.new_user("Matteo", "admin", NOW)
+    rows = bot.main_kb_rows(admin)
+    assert len(rows) == 3 and rows[2] == [bot.BTN_INVITE, bot.BTN_USERS]
     assert all(0 < len(d) <= 40 for _, d in bot.commands_for("admin"))
