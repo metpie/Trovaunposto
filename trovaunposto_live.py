@@ -57,6 +57,9 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 OWNER = os.environ.get("TELEGRAM_CHAT_ID", "")
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "60"))
+# Tetto di ricerche attive per persona (ogni ricerca = 1 richiesta al sito al minuto)
+MAX_SEARCHES_ADMIN = int(os.environ.get("MAX_SEARCHES_ADMIN", "5"))
+MAX_SEARCHES_GUEST = int(os.environ.get("MAX_SEARCHES_GUEST", "3"))
 # Auto-rallentamento quando il sito è in difficoltà
 FAIL_THRESHOLD = 3      # cicli consecutivi tutti falliti prima di rallentare
 SLOW_SECONDS = 600      # pausa tra i tentativi quando il sito non risponde (10 min)
@@ -444,6 +447,23 @@ def redeem_invite(store, code, user_id, name, now):
     del store["invites"][code]
     store["users"][str(user_id)] = new_user(name, "guest", now)
     return True
+
+
+def is_admin(user):
+    return bool(user) and user.get("role") == "admin"
+
+
+def search_limit(user):
+    return MAX_SEARCHES_ADMIN if is_admin(user) else MAX_SEARCHES_GUEST
+
+
+def revoke_user(store, seen, user_id):
+    """Rimuove l'utente, le sue ricerche e la sua memoria dei biglietti visti (in place)."""
+    uid = str(user_id)
+    store["users"].pop(uid, None)
+    prefix = uid + ":"
+    for k in [k for k in seen if k.startswith(prefix)]:
+        del seen[k]
 
 
 # ---------------------------------------------------------------------------

@@ -106,3 +106,31 @@ def test_purge_invites_keeps_only_valid():
                         "BBBBBB": {"created": 0, "expires": NOW + 1}}
     bot.purge_invites(store, NOW)
     assert list(store["invites"]) == ["BBBBBB"]
+
+
+# --- Task 4: limiti e revoca ---------------------------------------------------
+
+def test_search_limit_by_role(monkeypatch):
+    assert bot.search_limit({"role": "admin"}) == 5
+    assert bot.search_limit({"role": "guest"}) == 3
+    monkeypatch.setattr(bot, "MAX_SEARCHES_ADMIN", 9)
+    monkeypatch.setattr(bot, "MAX_SEARCHES_GUEST", 1)
+    assert bot.search_limit({"role": "admin"}) == 9
+    assert bot.search_limit({"role": "guest"}) == 1
+
+
+def test_is_admin():
+    assert bot.is_admin({"role": "admin"}) is True
+    assert bot.is_admin({"role": "guest"}) is False
+
+
+def test_revoke_user_removes_only_that_user():
+    store = bot.empty_store()
+    bot.ensure_admin(store, OWNER, "Matteo", NOW)
+    store["users"]["42"] = bot.new_user("Anna", "guest", NOW)
+    store["users"]["42"]["searches"].append(_search())
+    seen = {"1000:1": 1.0, "42:2": 2.0, "42:3": 3.0, "420:4": 4.0}
+    bot.revoke_user(store, seen, "42")
+    assert "42" not in store["users"]
+    assert OWNER in store["users"]
+    assert seen == {"1000:1": 1.0, "420:4": 4.0}
