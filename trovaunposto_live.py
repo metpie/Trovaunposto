@@ -728,6 +728,44 @@ async def cmd_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------------------------------------------------------------------
+# Comandi admin: inviti e gestione utenti
+# ---------------------------------------------------------------------------
+async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    store = context.application.bot_data["store"]
+    if not is_admin(get_user(update, store)):
+        return
+    code = new_invite(store, dt.datetime.utcnow().timestamp())
+    save_store(store)
+    link = f"https://t.me/{context.bot.username}?start={code}"
+    await update.effective_message.reply_text(
+        f"🔗 <b>Invito creato</b>\nCodice: <code>{code}</code>\n{link}\n\n"
+        "Inoltra questo link alla persona da invitare. Vale 24 ore, una sola volta.",
+        parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
+
+def users_view(store):
+    guests = [(uid, u) for uid, u in store["users"].items() if not is_admin(u)]
+    if not guests:
+        return ("Nessun invitato. Usa /invita per generare un codice.", None)
+    lines = ["👥 <b>Utenti invitati</b>\n"]
+    rows = []
+    for uid, u in guests:
+        joined = dt.datetime.fromtimestamp(u.get("joined", 0), TZ).strftime("%d/%m/%Y")
+        lines.append(f"• <b>{esc(u.get('name') or uid)}</b> — {len(u['searches'])} ricerche · dal {joined}")
+        rows.append([InlineKeyboardButton(f"🗑 Revoca {u.get('name') or uid}", callback_data=f"revoke:{uid}")])
+    return ("\n".join(lines), InlineKeyboardMarkup(rows))
+
+
+async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    store = context.application.bot_data["store"]
+    if not is_admin(get_user(update, store)):
+        return
+    purge_invites(store, dt.datetime.utcnow().timestamp())
+    text, kb = users_view(store)
+    await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+
+
+# ---------------------------------------------------------------------------
 # Callback dei pulsanti del menu (fuori dal wizard)
 # ---------------------------------------------------------------------------
 async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -767,6 +805,43 @@ async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode=ParseMode.HTML, disable_web_page_preview=True)
             except Exception:
                 await q.message.reply_text("Non sono riuscito a controllare ora, riprova tra poco.")
+    elif data.startswith("revoke:") or data.startswith("revoke_ok:") or data == "revoke_no":
+        if not is_admin(user):
+            return
+        if data == "revoke_no":
+            text, kb = users_view(store)
+            await q.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+            return
+        uid = data.split(":")[1]
+        target = store["users"].get(uid)
+        if target is None or is_admin(target):
+            text, kb = users_view(store)
+            await q.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+            return
+        if data.startswith("revoke:"):
+            n = len(target["searches"])
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Sì, revoca", callback_data=f"revoke_ok:{uid}"),
+                InlineKeyboardButton("❌ Annulla", callback_data="revoke_no"),
+            ]])
+            await q.edit_message_text(
+                f"Revocare l'accesso a <b>{esc(target.get('name') or uid)}</b>? "
+                f"Le sue {n} ricerche verranno cancellate.",
+                parse_mode=ParseMode.HTML, reply_markup=kb)
+            return
+        # revoke_ok
+        name = target.get("name") or uid
+        seen = context.application.bot_data["seen"]
+        revoke_user(store, seen, uid)
+        save_store(store)
+        context.application.bot_data["seen"] = save_seen(seen)
+        try:
+            await context.bot.send_message(chat_id=uid, text="Il tuo accesso al bot è stato revocato.")
+        except Exception as e:  # noqa: BLE001
+            log.warning("avviso revoca fallito: %s", e)
+        text, kb = users_view(store)
+        await q.edit_message_text(f"🗑 Accesso revocato a <b>{esc(name)}</b>.\n\n{text}",
+                                  parse_mode=ParseMode.HTML, reply_markup=kb)
 
 
 # ---------------------------------------------------------------------------
@@ -1245,7 +1320,11 @@ def build_application():
     app.add_handler(CommandHandler("stato", cmd_status))
     app.add_handler(CommandHandler(["pulisci", "clear"], cmd_clear))
     app.add_handler(CommandHandler("debug", cmd_debug))
-    app.add_handler(CallbackQueryHandler(on_menu, pattern=r"^(list|pause|resume|del:\d+|avail:\d+)$"))
+    app.add_handler(CommandHandler("invita", cmd_invite))
+    app.add_handler(CommandHandler("utenti", cmd_users))
+    app.add_handler(CallbackQueryHandler(
+        on_menu,
+        pattern=r"^(list|pause|resume|del:\d+|avail:\d+|revoke:\d+|revoke_ok:\d+|revoke_no)$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_unauthorized_text), group=1)
 
     app.job_queue.run_repeating(check_job, interval=CHECK_INTERVAL, first=10)
