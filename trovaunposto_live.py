@@ -382,8 +382,24 @@ def save_store(store):
         json.dump(store, f, ensure_ascii=False, indent=2)
 
 
+def seen_key(user_id, ticket_id):
+    return f"{user_id}:{ticket_id}"
+
+
+def migrate_seen(old, owner_id):
+    """Le chiavi vecchie (solo id biglietto) vengono attribuite all'admin."""
+    out = {}
+    for k, v in old.items():
+        out[k if ":" in k else seen_key(owner_id, k)] = v
+    return out
+
+
 def load_seen():
-    return _load(SEEN_PATH, {})
+    raw = _load(SEEN_PATH, {})
+    seen = migrate_seen(raw, OWNER)
+    if seen != raw:
+        seen = save_seen(seen)
+    return seen
 
 
 def save_seen(seen):

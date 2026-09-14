@@ -43,3 +43,17 @@ def test_ensure_admin_creates_then_reuses():
     b = bot.ensure_admin(store, OWNER, "Altro", NOW + 1)
     assert b is a
     assert a["name"] == "Matteo"  # non sovrascrive il nome esistente
+
+
+# --- Task 2: seen -------------------------------------------------------------
+
+def test_seen_key():
+    assert bot.seen_key("42", "987") == "42:987"
+    assert bot.seen_key(42, 987) == "42:987"
+
+
+def test_migrate_seen_prefixes_old_keys_with_owner():
+    old = {"111": 1.0, "222": 2.0, "42:333": 3.0}
+    new = bot.migrate_seen(old, OWNER)
+    assert new == {"1000:111": 1.0, "1000:222": 2.0, "42:333": 3.0}
+    assert "111" in old  # non modifica l'input
