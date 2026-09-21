@@ -253,3 +253,27 @@ def test_clear_batches_covers_range_down_to_floor():
     assert list(bot.clear_batches(250, 200)) == [list(range(250, 200, -1))]
     assert list(bot.clear_batches(5, 5)) == []
     assert list(bot.clear_batches(5, 9)) == []
+
+
+# --- Pausa e nuove ricerche ----------------------------------------------------
+
+def test_resume_for_new_search_unpauses_only_if_paused():
+    user = bot.new_user("Anna", "guest", NOW)
+    assert bot.resume_for_new_search(user) is False
+    assert user["paused"] is False
+    user["paused"] = True
+    assert bot.resume_for_new_search(user) is True
+    assert user["paused"] is False
+
+
+def test_users_view_shows_paused_guests():
+    store = bot.empty_store()
+    bot.ensure_admin(store, OWNER, "Matteo", NOW)
+    store["users"]["42"] = bot.new_user("Anna", "guest", NOW)
+    store["users"]["43"] = bot.new_user("Bruno", "guest", NOW)
+    store["users"]["43"]["paused"] = True
+    text, kb = bot.users_view(store)
+    anna, bruno = [l for l in text.splitlines() if l.startswith("•")]
+    assert "Anna" in anna and "in pausa" not in anna
+    assert "Bruno" in bruno and "in pausa" in bruno
+    assert len(kb.inline_keyboard) == 2

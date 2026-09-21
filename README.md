@@ -48,12 +48,12 @@ Sotto la casella di testo c'è una **tastiera fissa** con le azioni principali (
 - **🔎 Cerca ora** (o `/cerca`): consulta i biglietti per una tratta/giorno **senza salvare** la ricerca.
 - **➕ Nuova ricerca** (o `/aggiungi`): crea una ricerca guidata dai bottoni (con avvisi sui nuovi).
 - **📋 Le mie ricerche** (o `/lista`): vedi e rimuovi le ricerche.
-- **⏸️ Pausa / ▶️ Riprendi** (o `/pausa`, `/riprendi`): ferma/riattiva gli avvisi.
+- **⏸️ Pausa / ▶️ Riprendi** (o `/pausa`, `/riprendi`): ferma/riattiva gli avvisi. Creare una nuova ricerca mentre sei in pausa riattiva gli avvisi da sola (il bot te lo dice).
 - `/stato`: stato e numero di ricerche.
 - `/pulisci` (o `/clear`): cancella tutti i messaggi della chat degli ultimi 2 giorni (Telegram non permette ai bot di rimuovere quelli più vecchi: per quelli usa “Cancella chat” dal menù di Telegram).
 - `/aiuto`: menù principale.
 - `/invita` (solo amministratore): genera un codice d'invito monouso valido 24 ore e un link da inoltrare.
-- `/utenti` (solo amministratore): elenca le persone invitate e permette di revocare l'accesso (le loro ricerche vengono cancellate).
+- `/utenti` (solo amministratore): elenca le persone invitate (con chi ha gli avvisi in pausa) e permette di revocare l'accesso (le loro ricerche vengono cancellate).
 
 Prima di salvare una ricerca il bot mostra un riepilogo da confermare; dopo il salvataggio puoi aggiungere il ritorno con un tocco.
 

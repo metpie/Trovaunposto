@@ -492,6 +492,15 @@ def search_limit(user):
     return MAX_SEARCHES_ADMIN if is_admin(user) else MAX_SEARCHES_GUEST
 
 
+def resume_for_new_search(user):
+    """Creare una ricerca con avvisi implica volerli: se l'utente era in pausa la toglie.
+    Ritorna True se ha cambiato qualcosa (in place)."""
+    if user.get("paused"):
+        user["paused"] = False
+        return True
+    return False
+
+
 def revoke_user(store, seen, user_id):
     """Rimuove l'utente, le sue ricerche e la sua memoria dei biglietti visti (in place)."""
     uid = str(user_id)
@@ -902,7 +911,8 @@ def users_view(store):
     rows = []
     for uid, u in guests:
         joined = dt.datetime.fromtimestamp(u.get("joined", 0), TZ).strftime("%d/%m/%Y")
-        lines.append(f"• <b>{esc(u.get('name') or uid)}</b> — {len(u['searches'])} ricerche · dal {joined}")
+        stato = " · ⏸️ <b>in pausa</b>" if u.get("paused") else ""
+        lines.append(f"• <b>{esc(u.get('name') or uid)}</b> — {len(u['searches'])} ricerche · dal {joined}{stato}")
         rows.append([InlineKeyboardButton(f"🗑 Revoca {u.get('name') or uid}", callback_data=f"revoke:{uid}")])
     return ("\n".join(lines), InlineKeyboardMarkup(rows))
 
@@ -1404,9 +1414,13 @@ async def _finish(update, context, send):
         context.user_data.pop("mode", None)
         return ConversationHandler.END
     user["searches"].append(search)
+    resumed = resume_for_new_search(user)
     save_store(store)
     context.user_data["last_route"] = {"dep": d.get("dep", ""), "arr": d.get("arr", "")}
     await send(f"✅ <b>Ricerca creata!</b>\n{esc(search_summary(search))}")
+    if resumed:
+        await send("▶️ Avevi gli avvisi <b>in pausa</b>: li ho riattivati, così questa ricerca "
+                   "ti avvisa davvero.", reply_markup=main_kb(user))
     # mostra i biglietti già disponibili ora e li registra (senza riavvisare)
     seen = context.application.bot_data["seen"]
     try:
@@ -1525,6 +1539,10 @@ async def check_job(context: ContextTypes.DEFAULT_TYPE):
     app = context.application
     store = app.bot_data["store"]
     todo = list(iter_searches(store, only_active=True))
+    paused = sum(len(u.get("searches", [])) for u in store["users"].values() if u.get("paused"))
+    app.bot_data["tick"] = app.bot_data.get("tick", 0) + 1
+    if paused and app.bot_data["tick"] % 30 == 1:
+        log.info("ricerche saltate perché l'utente è in pausa: %d", paused)
     if not todo:
         return
     now = dt.datetime.utcnow().timestamp()
@@ -1558,6 +1576,7 @@ async def check_job(context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(
                     chat_id=uid, text=notify_text(search, card, m),
                     parse_mode=ParseMode.HTML, disable_web_page_preview=False)
+                log.info("notifica a %s: %s biglietto %s", uid, search.get("name"), card["id"])
             except Exception as e:  # noqa: BLE001
                 log.warning("invio notifica a %s fallito: %s", uid, e)
     if changed:
